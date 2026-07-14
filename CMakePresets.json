@@ -1,0 +1,30 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 20,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "clion-nebulizer-g070cbt6",
+      "displayName": "Nebulizer G070 CBT6",
+      "description": "Zephyr configure preset for boards/arm/nebulizer_g070cbt6",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/cmake-build-clion-nebulizer-g070cbt6",
+      "cacheVariables": {
+        "BOARD": "nebulizer_g070cbt6",
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "NO_BUILD_TYPE_WARNING": "ON",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "clion-nebulizer-g070cbt6",
+      "configurePreset": "clion-nebulizer-g070cbt6",
+      "jobs": 8
+    }
+  ]
+}

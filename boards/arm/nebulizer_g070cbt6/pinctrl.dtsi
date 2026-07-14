@@ -1,0 +1,13 @@
+#include <st/g0/stm32g070cbtx-pinctrl.dtsi>
+
+&pinctrl {
+	/omit-if-no-ref/ led_pc14_gpio: led_pc14_gpio {
+		pinmux = <STM32_PINMUX('C', 14, GPIO)>;
+		output-low;
+	};
+
+	/omit-if-no-ref/ led_pc15_gpio: led_pc15_gpio {
+		pinmux = <STM32_PINMUX('C', 15, GPIO)>;
+		output-low;
+	};
+};

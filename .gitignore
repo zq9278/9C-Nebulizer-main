@@ -1,0 +1,35 @@
+# macOS
+.DS_Store
+._*
+
+# IDE
+.idea/
+.vscode/
+
+# Zephyr / CMake / Ninja build outputs
+.west/
+build/
+build*/
+cmake-build-*/
+CMakeCache.txt
+CMakeFiles/
+compile_commands.json
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.venv/
+venv/
+
+# Logs and local temp files
+*.log
+*.tmp
+*.swp
+*.swo
+
+# Local notes / prompt drafts
+提示词.txt

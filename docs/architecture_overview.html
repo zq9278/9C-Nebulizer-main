@@ -1,0 +1,534 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>9C Nebulizer Architecture Overview</title>
+  <style>
+    :root {
+      --bg: #f4f1ea;
+      --panel: #fffdf8;
+      --panel-2: #f7efe3;
+      --text: #1f2a30;
+      --muted: #5a6a70;
+      --line: #d9c8ae;
+      --accent: #1f6f78;
+      --accent-2: #d67c3c;
+      --good: #2d7b4b;
+      --warn: #9b5c18;
+      --shadow: 0 18px 40px rgba(69, 48, 22, 0.08);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      background:
+        radial-gradient(circle at top right, rgba(214, 124, 60, 0.14), transparent 30%),
+        linear-gradient(180deg, #fbf7f0 0%, var(--bg) 100%);
+      color: var(--text);
+    }
+
+    .page {
+      width: min(1280px, calc(100% - 32px));
+      margin: 0 auto;
+      padding: 28px 0 56px;
+    }
+
+    .hero {
+      background: linear-gradient(135deg, rgba(31, 111, 120, 0.94), rgba(21, 55, 73, 0.98));
+      color: #f8f6f1;
+      border-radius: 24px;
+      padding: 28px;
+      box-shadow: var(--shadow);
+      overflow: hidden;
+      position: relative;
+    }
+
+    .hero::after {
+      content: "";
+      position: absolute;
+      inset: auto -60px -60px auto;
+      width: 220px;
+      height: 220px;
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.07);
+    }
+
+    h1, h2, h3 {
+      margin: 0 0 12px;
+      line-height: 1.2;
+    }
+
+    h1 {
+      font-size: clamp(28px, 4vw, 42px);
+      letter-spacing: 0.02em;
+    }
+
+    h2 {
+      font-size: 24px;
+      margin-top: 28px;
+    }
+
+    h3 {
+      font-size: 18px;
+      color: var(--accent);
+    }
+
+    p {
+      margin: 0 0 10px;
+      color: var(--muted);
+      line-height: 1.7;
+    }
+
+    .hero p {
+      color: rgba(248, 246, 241, 0.88);
+      max-width: 880px;
+    }
+
+    .tag-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 18px;
+    }
+
+    .tag {
+      padding: 8px 12px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.12);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      font-size: 13px;
+    }
+
+    .section {
+      margin-top: 22px;
+      background: var(--panel);
+      border: 1px solid rgba(217, 200, 174, 0.7);
+      border-radius: 22px;
+      padding: 24px;
+      box-shadow: var(--shadow);
+    }
+
+    .grid {
+      display: grid;
+      gap: 16px;
+    }
+
+    .grid.summary {
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      margin-top: 18px;
+    }
+
+    .card {
+      background: var(--panel-2);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 18px;
+    }
+
+    .card strong {
+      display: block;
+      font-size: 15px;
+      color: var(--text);
+      margin-bottom: 8px;
+    }
+
+    .layer-stack {
+      display: grid;
+      gap: 12px;
+      margin-top: 16px;
+    }
+
+    .layer {
+      border-radius: 18px;
+      border: 1px solid var(--line);
+      padding: 16px 18px;
+      background: linear-gradient(180deg, #fffaf3 0%, #f9f1e6 100%);
+    }
+
+    .layer .title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      font-weight: 700;
+      color: var(--text);
+      margin-bottom: 8px;
+    }
+
+    .pill {
+      display: inline-block;
+      font-size: 12px;
+      color: white;
+      background: var(--accent);
+      padding: 4px 10px;
+      border-radius: 999px;
+    }
+
+    .layer ul,
+    .timeline ul,
+    .notes ul {
+      margin: 10px 0 0 18px;
+      color: var(--muted);
+      line-height: 1.7;
+    }
+
+    .runtime-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 16px;
+      margin-top: 16px;
+    }
+
+    .thread-card {
+      border-radius: 18px;
+      border: 1px solid var(--line);
+      background: #fff;
+      padding: 16px;
+    }
+
+    .thread-card .period {
+      display: inline-block;
+      font-size: 12px;
+      color: var(--good);
+      background: rgba(45, 123, 75, 0.1);
+      padding: 4px 10px;
+      border-radius: 999px;
+      margin-bottom: 10px;
+    }
+
+    .flow {
+      display: grid;
+      gap: 10px;
+      margin-top: 16px;
+    }
+
+    .flow-step {
+      display: grid;
+      grid-template-columns: 44px 1fr;
+      gap: 14px;
+      align-items: start;
+      padding: 14px 16px;
+      border-radius: 18px;
+      border: 1px solid var(--line);
+      background: #fff;
+    }
+
+    .flow-step .num {
+      width: 44px;
+      height: 44px;
+      border-radius: 14px;
+      display: grid;
+      place-items: center;
+      color: white;
+      font-weight: 700;
+      background: linear-gradient(135deg, var(--accent-2), #b85a21);
+    }
+
+    .code {
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 13px;
+      background: rgba(31, 111, 120, 0.08);
+      color: var(--accent);
+      padding: 2px 6px;
+      border-radius: 6px;
+    }
+
+    .two-col {
+      display: grid;
+      grid-template-columns: 1.2fr 0.8fr;
+      gap: 16px;
+      margin-top: 16px;
+    }
+
+    .notes {
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 18px;
+    }
+
+    a {
+      color: var(--accent);
+      text-decoration: none;
+    }
+
+    a:hover {
+      text-decoration: underline;
+    }
+
+    .footer {
+      margin-top: 18px;
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    @media (max-width: 900px) {
+      .two-col {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <section class="hero">
+      <h1>9C Nebulizer 架构总览</h1>
+      <p>
+        这是一个基于 Zephyr RTOS 和 STM32G070CBT6 的眼科雾化控制器项目。整体架构不是简单的“main + loop”，而是
+        一个围绕 <span class="code">app_context</span>、事件队列、状态机和多线程周期任务组织起来的嵌入式控制系统。
+      </p>
+      <div class="tag-row">
+        <span class="tag">Zephyr RTOS</span>
+        <span class="tag">事件驱动状态机</span>
+        <span class="tag">多线程周期控制</span>
+        <span class="tag">板级抽象 + 驱动包装</span>
+        <span class="tag">Host / Mist 双协议链路</span>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>一句话理解</h2>
+      <div class="grid summary">
+        <div class="card">
+          <strong>系统定位</strong>
+          <p>一个“治疗流程协调器”，通过统一状态、统一事件和统一遥测对象把传感、加热、风机、雾化板和上位机串起来。</p>
+        </div>
+        <div class="card">
+          <strong>控制核心</strong>
+          <p><span class="code">AppTask</span> 负责状态切换和命令裁决，<span class="code">ControlTask</span> 负责周期控制输出。</p>
+        </div>
+        <div class="card">
+          <strong>数据中心</strong>
+          <p><span class="code">telemetry_status_t</span> 是全局快照视图，业务模块通过 <span class="code">app_context</span> 读写它。</p>
+        </div>
+        <div class="card">
+          <strong>安全策略</strong>
+          <p>安全检测独立线程轮询，异常通过事件注入状态机，最终统一进入 <span class="code">FAULT</span> 或 <span class="code">PAUSED</span>。</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>分层结构</h2>
+      <p>下面这层次基本对应当前工程目录和代码职责。</p>
+      <div class="layer-stack">
+        <div class="layer">
+          <div class="title">
+            <span>应用编排层</span>
+            <span class="pill">src/</span>
+          </div>
+          <p>负责启动顺序、状态机、事件分发、安全落锁、遥测聚合。</p>
+          <ul>
+            <li><a href="../src/main.c">src/main.c</a> 只做启动入口。</li>
+            <li><a href="../src/app/app_init.c">src/app/app_init.c</a> 串起所有服务初始化和配置加载。</li>
+            <li><a href="../src/app/app_tasks.c">src/app/app_tasks.c</a> 是运行期调度中心。</li>
+            <li><a href="../src/state_machine/treatment_sm.c">src/state_machine/treatment_sm.c</a> 管治疗状态迁移规则。</li>
+          </ul>
+        </div>
+        <div class="layer">
+          <div class="title">
+            <span>业务服务层</span>
+            <span class="pill">services/</span>
+          </div>
+          <p>把加热、风机、雾化、传感、设置存储、主机通信拆成独立服务，避免业务逻辑直接碰底层驱动。</p>
+          <ul>
+            <li><span class="code">communication/</span>: Host RX/TX 与命令应答。</li>
+            <li><span class="code">heat/</span>: PID 与 TRIAC 加热输出控制。</li>
+            <li><span class="code">mist/</span>: 雾化板链路和运行状态管理。</li>
+            <li><span class="code">sensors/</span>, <span class="code">fan/</span>, <span class="code">storage/</span>: 采样、执行器和配置落盘。</li>
+          </ul>
+        </div>
+        <div class="layer">
+          <div class="title">
+            <span>协议与编解码层</span>
+            <span class="pill">protocols/</span>
+          </div>
+          <p>把帧格式、CRC、环形解析器和 Host / Mist 协议对象化，通信服务只负责收发，不把协议细节散落到线程里。</p>
+          <ul>
+            <li><span class="code">common/</span>: CRC16、frame codec、ring parser。</li>
+            <li><span class="code">host/</span>: 上位机协议和命令解释。</li>
+            <li><span class="code">mist/</span>: 雾化板协议和命令打包。</li>
+          </ul>
+        </div>
+        <div class="layer">
+          <div class="title">
+            <span>板级与设备适配层</span>
+            <span class="pill">boards/ + src/platform/ + drivers_app/</span>
+          </div>
+          <p>这里把 Zephyr 原生设备树、板级资源和应用驱动包装拼起来，让上层服务使用“业务友好接口”而不是直接操作设备句柄。</p>
+          <ul>
+            <li><a href="../boards/arm/nebulizer_g070cbt6">boards/arm/nebulizer_g070cbt6/</a>: 自定义板定义。</li>
+            <li><a href="../src/platform/board_devices.c">src/platform/board_devices.c</a>: 板资源映射和校验。</li>
+            <li><a href="../drivers_app">drivers_app/</a>: GPIO / ADC / UART / PWM / TIMER 的应用侧包装。</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>启动链路</h2>
+      <div class="flow">
+        <div class="flow-step">
+          <div class="num">1</div>
+          <div>
+            <h3>main 入口极简</h3>
+            <p><a href="../src/main.c">main.c</a> 只做两件事：<span class="code">app_init()</span> 和 <span class="code">app_tasks_start()</span>。这说明主设计思想是“初始化后完全交给任务系统”。</p>
+          </div>
+        </div>
+        <div class="flow-step">
+          <div class="num">2</div>
+          <div>
+            <h3>app_init 按依赖顺序拉起服务</h3>
+            <p>先初始化上下文，再做关键设备检查、配置存储加载、传感/风机/加热/雾化/主机通信/安全/遥测初始化。</p>
+          </div>
+        </div>
+        <div class="flow-step">
+          <div class="num">3</div>
+          <div>
+            <h3>运行期依赖配置快照</h3>
+            <p>配置和 PID 参数加载后会立即写回 <span class="code">app_context</span>，后续线程不直接维护自己的配置副本。</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>线程模型</h2>
+      <p>当前运行期不是一个 super loop，而是多个职责明确的 Zephyr 线程协作。</p>
+      <div class="runtime-grid">
+        <div class="thread-card">
+          <div class="period">主控线程</div>
+          <h3>AppTask</h3>
+          <p>消费事件队列，解析 Host 命令，执行状态迁移，进入故障/恢复/暂停/完成状态，并触发状态快照上报。</p>
+        </div>
+        <div class="thread-card">
+          <div class="period">20 ms</div>
+          <h3>SensorTask</h3>
+          <p>周期采样传感器，结果更新到 <span class="code">app_context</span> 里的 <span class="code">sensor_snapshot_t</span>。</p>
+        </div>
+        <div class="thread-card">
+          <div class="period">20 ms</div>
+          <h3>ControlTask</h3>
+          <p>依据当前状态决定风机、雾化、加热输出，同时在运行态递减剩余治疗时间。</p>
+        </div>
+        <div class="thread-card">
+          <div class="period">10 ms</div>
+          <h3>SafetyTask</h3>
+          <p>轮询安全服务，发现异常就投递 <span class="code">FAULT</span> / <span class="code">PAUSE</span> / <span class="code">RESUME</span> 事件。</p>
+        </div>
+        <div class="thread-card">
+          <div class="period">500 ms</div>
+          <h3>TelemetryTask</h3>
+          <p>周期发布遥测；Host 命令处理也会在关键状态变更时主动补发状态快照。</p>
+        </div>
+        <div class="thread-card">
+          <div class="period">通信线程</div>
+          <h3>HostRx / HostTx / MistTask</h3>
+          <p>Host 收发和雾化板处理各自独立线程，避免把串口阻塞、解析和业务决策混在一起。</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>状态机与事件流</h2>
+      <div class="two-col">
+        <div class="notes">
+          <h3>状态集合</h3>
+          <ul>
+            <li>BOOT</li>
+            <li>SELF_TEST</li>
+            <li>READY</li>
+            <li>CONFIGURING</li>
+            <li>RUNNING_HOT / RUNNING_COLD</li>
+            <li>PAUSED</li>
+            <li>DONE</li>
+            <li>FAULT</li>
+          </ul>
+        </div>
+        <div class="notes">
+          <h3>主要事件</h3>
+          <ul>
+            <li>HOST_CMD</li>
+            <li>START / STOP / PAUSE / RESUME</li>
+            <li>FAULT / FAULT_CLEAR</li>
+            <li>HEARTBEAT_TIMEOUT</li>
+            <li>MIST_STATUS</li>
+          </ul>
+        </div>
+      </div>
+      <div class="flow">
+        <div class="flow-step">
+          <div class="num">A</div>
+          <div>
+            <h3>命令进入</h3>
+            <p>上位机命令通过 Host 通信服务进入 <span class="code">app_handle_host_command()</span>，先做参数检查，再决定是立即修改配置，还是投给状态机裁决。</p>
+          </div>
+        </div>
+        <div class="flow-step">
+          <div class="num">B</div>
+          <div>
+            <h3>状态裁决</h3>
+            <p><a href="../src/state_machine/treatment_sm.c">treatment_sm_handle_event()</a> 只负责“当前状态 + 事件 + 当前快照”能不能转移，不直接操作硬件。</p>
+          </div>
+        </div>
+        <div class="flow-step">
+          <div class="num">C</div>
+          <div>
+            <h3>动作执行</h3>
+            <p>真正的输出动作在 <span class="code">app_apply_state_transition()</span> 和 <span class="code">ControlTask</span> 中完成，比如停止风机、停加热、请求停雾化等。</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>关键共享对象</h2>
+      <div class="grid summary">
+        <div class="card">
+          <strong>telemetry_status_t</strong>
+          <p>项目里最重要的汇总结构，包含状态、治疗配置、传感快照、雾化板状态、热控 PID、维护模式、故障码和剩余时间。</p>
+        </div>
+        <div class="card">
+          <strong>app_context</strong>
+          <p>统一的状态仓库。线程之间尽量不直接交叉依赖，而是通过它交换快照和控制状态。</p>
+        </div>
+        <div class="card">
+          <strong>app_event_queue</strong>
+          <p>把“命令解析”和“状态变更”解耦。通信、安全、控制等模块把事件送进队列，AppTask 集中处理。</p>
+        </div>
+        <div class="card">
+          <strong>settings_store</strong>
+          <p>把治疗参数和 PID 参数持久化，并在启动时恢复，说明系统考虑了掉电后继续可用的维护需求。</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>我对当前架构的判断</h2>
+      <div class="notes">
+        <ul>
+          <li>这是一个比较清晰的“分层 + 状态机 + 多线程周期任务”架构，不是把所有逻辑塞进一个控制循环。</li>
+          <li>应用层和设备层的边界是明确的，<span class="code">drivers_app</span> 和 <span class="code">services</span> 的划分是合理的。</li>
+          <li>Host 命令和安全事件最终都汇总到 AppTask，这让状态一致性比较容易维护。</li>
+          <li>控制输出主要在 ControlTask，状态裁决主要在 AppTask，这种“决策 / 执行分离”是当前代码最值得保留的设计点。</li>
+          <li>从目录和函数职责看，当前项目已经具备继续拆出更完整架构文档的基础，比如时序图、故障树、协议图和线程优先级分析。</li>
+        </ul>
+      </div>
+      <div class="footer">
+        分析依据主要来自
+        <a href="../README.md">README.md</a>、
+        <a href="../CMakeLists.txt">CMakeLists.txt</a>、
+        <a href="../src/app/app_init.c">app_init.c</a>、
+        <a href="../src/app/app_tasks.c">app_tasks.c</a>、
+        <a href="../src/state_machine/treatment_sm.c">treatment_sm.c</a>、
+        <a href="../include/nebulizer/app_types.h">app_types.h</a>。
+      </div>
+    </section>
+  </div>
+</body>
+</html>

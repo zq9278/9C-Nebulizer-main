@@ -1,0 +1,6 @@
+#ifndef SERVICES_COMMUNICATION_HOST_COMM_RX_H_
+#define SERVICES_COMMUNICATION_HOST_COMM_RX_H_
+
+void host_comm_rx_task(void);
+
+#endif /* SERVICES_COMMUNICATION_HOST_COMM_RX_H_ */

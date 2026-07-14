@@ -1,0 +1,438 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MOC3063 零交越驱动下 TRIAC_EN 分配分析</title>
+  <style>
+    :root {
+      --bg: #f3efe7;
+      --panel: #fffdf8;
+      --ink: #1f2a30;
+      --muted: #5e6a70;
+      --line: #d8cfc1;
+      --accent: #9c3d1c;
+      --accent-soft: #f1d8c7;
+      --good: #1f6b4f;
+      --warn: #9b5f09;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: "PingFang SC", "Noto Sans SC", "Microsoft YaHei", sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at top right, #f7e4d6 0, transparent 28%),
+        linear-gradient(180deg, #f6f2ea 0%, var(--bg) 100%);
+    }
+
+    main {
+      max-width: 1120px;
+      margin: 0 auto;
+      padding: 40px 24px 64px;
+    }
+
+    h1, h2, h3 {
+      margin: 0 0 16px;
+      line-height: 1.2;
+    }
+
+    h1 {
+      font-size: 34px;
+      letter-spacing: 0.02em;
+    }
+
+    h2 {
+      font-size: 22px;
+      padding-left: 12px;
+      border-left: 4px solid var(--accent);
+    }
+
+    h3 {
+      font-size: 18px;
+      color: var(--accent);
+    }
+
+    p, li {
+      font-size: 15px;
+      line-height: 1.75;
+      color: var(--ink);
+    }
+
+    .lead {
+      margin: 18px 0 0;
+      font-size: 17px;
+      color: var(--muted);
+    }
+
+    .hero,
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      box-shadow: 0 14px 40px rgba(56, 40, 18, 0.08);
+    }
+
+    .hero {
+      padding: 32px;
+      margin-bottom: 28px;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 18px;
+      margin: 22px 0 30px;
+    }
+
+    .card {
+      padding: 22px;
+    }
+
+    .tag {
+      display: inline-block;
+      padding: 6px 10px;
+      border-radius: 999px;
+      background: var(--accent-soft);
+      color: var(--accent);
+      font-size: 13px;
+      font-weight: 600;
+      margin-bottom: 10px;
+    }
+
+    .highlight {
+      padding: 18px 20px;
+      border-radius: 16px;
+      background: #fff6ef;
+      border: 1px solid #eed7c7;
+      margin: 16px 0 0;
+    }
+
+    .good {
+      color: var(--good);
+      font-weight: 700;
+    }
+
+    .warn {
+      color: var(--warn);
+      font-weight: 700;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      overflow: hidden;
+      border-radius: 16px;
+      border: 1px solid var(--line);
+      background: var(--panel);
+      margin-top: 18px;
+    }
+
+    th, td {
+      padding: 14px 16px;
+      text-align: left;
+      border-bottom: 1px solid #e8dfd3;
+      vertical-align: top;
+      font-size: 14px;
+      line-height: 1.6;
+    }
+
+    th {
+      background: #f7f1e8;
+      color: #5b4332;
+      font-weight: 700;
+    }
+
+    tr:last-child td {
+      border-bottom: none;
+    }
+
+    .timeline {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+      margin: 18px 0 8px;
+    }
+
+    .slot {
+      flex: 1 1 44px;
+      min-width: 44px;
+      text-align: center;
+      padding: 12px 6px;
+      border-radius: 12px;
+      border: 1px solid #d9cfbf;
+      background: #f4ece1;
+      color: #72563f;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .slot.on {
+      background: #d56a3b;
+      color: white;
+      border-color: #c65928;
+    }
+
+    code {
+      background: #f4eee5;
+      padding: 2px 6px;
+      border-radius: 6px;
+      font-size: 13px;
+    }
+
+    .footer {
+      margin-top: 28px;
+      padding: 22px 24px;
+      border-radius: 18px;
+      background: #1f2a30;
+      color: #f7f4ef;
+    }
+
+    .footer p {
+      color: #f7f4ef;
+      margin: 0;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <section class="hero">
+      <div class="tag">Nebulizer Heating Analysis</div>
+      <h1>不使用外部过零检测时，TRIAC_EN 应该如何分配更合适</h1>
+      <p class="lead">
+        基于当前硬件原理图，驱动器件为 <code>MOC3063</code>，它是
+        <strong>零交越导通型</strong> 光耦可控硅。结论很明确：这一路不适合相位角调功，
+        更适合使用 <strong>低频时间比例控制 / burst fire</strong>，即让
+        <code>TRIAC_EN</code> 在一个较慢的时间窗口内按比例开关。
+      </p>
+      <div class="highlight">
+        <strong>先给结论：</strong>
+        在不使用 <code>ZCD_OUT</code> 的前提下，推荐先从
+        <strong>500 ms 控制窗口 + 50 ms 基本片段</strong> 开始。
+        这样既能保证零交越型器件可靠导通，也能兼顾分辨率和热惯性系统的稳定性。
+      </div>
+    </section>
+
+    <section class="grid">
+      <article class="card">
+        <h3>为什么不能用普通高频 PWM</h3>
+        <p>
+          <code>MOC3063</code> 不是 MCU 看到高电平就立刻导通，它会等到交流电压经过零点附近时才动作。
+          因此如果 <code>TRIAC_EN</code> 只给很窄的脉冲，可能在这一小段时间里根本没有遇到零点，
+          那么这次脉冲就完全无效。
+        </p>
+        <p class="warn">所以 kHz 级 PWM、甚至 100 Hz 的短脉冲式占空比都不合适。</p>
+      </article>
+
+      <article class="card">
+        <h3>为什么不需要相位角延时</h3>
+        <p>
+          相位角调功的前提是“软件精确知道过零点，然后延时若干微秒触发门极”。
+          但 <code>MOC3063</code> 本身就是零交越导通型，它会把触发时刻自动钳在零点附近。
+          这时软件的职责不再是“算延时”，而是“决定这一段时间是否允许导通”。
+        </p>
+        <p class="good">也就是：做慢速功率分配，不做快速相位控制。</p>
+      </article>
+
+      <article class="card">
+        <h3>为什么窗口可以做得比较慢</h3>
+        <p>
+          你的系统是“雾气经过加热管”的结构，热惯性和滞后都很大。输出功率每 10 ms 变化一次没有意义，
+          反而会让控制策略更难看懂、更难调试。对于这种对象，执行器层使用
+          <strong>200~1000 ms</strong> 级别的功率窗口反而更合适。
+        </p>
+      </article>
+    </section>
+
+    <section class="card">
+      <h2>1. 先明确几个物理约束</h2>
+      <ul>
+        <li>市电按国内常用 <strong>50 Hz</strong> 估算，一个完整周期约 <strong>20 ms</strong>，半周约 <strong>10 ms</strong>。</li>
+        <li>不读取 <code>ZCD_OUT</code> 时，MCU 并不知道当前离下一个零点还有多久。</li>
+        <li>因此一次“允许导通”的高电平，必须持续足够长，才能大概率覆盖到至少一个零点。</li>
+        <li>同理，一次“禁止导通”的低电平，也应持续足够长，才能确保至少有一个零点时处于关闭状态。</li>
+      </ul>
+      <div class="highlight">
+        <strong>工程建议：</strong>
+        如果完全不依赖外部过零检测，单个开/关片段最好不要短于 <strong>40~50 ms</strong>。
+        这相当于覆盖 2~2.5 个工频周期，容错比较舒服。
+      </div>
+    </section>
+
+    <section class="card" style="margin-top: 24px;">
+      <h2>2. 几种常见分配方式对比</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>方案</th>
+            <th>窗口大小</th>
+            <th>最小片段</th>
+            <th>分辨率</th>
+            <th>优点</th>
+            <th>问题</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>快速 PWM</td>
+            <td>10~20 ms</td>
+            <td>1~5 ms</td>
+            <td>高</td>
+            <td>看起来“像 PWM”</td>
+            <td>极易错过零点，很多脉冲可能无效，不推荐</td>
+          </tr>
+          <tr>
+            <td>中速 burst</td>
+            <td>200 ms</td>
+            <td>40 ms</td>
+            <td>20%</td>
+            <td>响应较快，逻辑简单</td>
+            <td>分辨率偏粗，低功率附近比较跳</td>
+          </tr>
+          <tr>
+            <td><strong>推荐方案</strong></td>
+            <td><strong>500 ms</strong></td>
+            <td><strong>50 ms</strong></td>
+            <td><strong>10%</strong></td>
+            <td>导通可靠、调试直观、适合高热惯性对象</td>
+            <td>单窗口内分辨率一般，但可跨窗口抖动补偿</td>
+          </tr>
+          <tr>
+            <td>慢速 burst</td>
+            <td>1000 ms</td>
+            <td>50 ms</td>
+            <td>5%</td>
+            <td>分辨率更细</td>
+            <td>执行器响应更慢，调试时感觉“肉”</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="card" style="margin-top: 24px;">
+      <h2>3. 推荐的第一版分配方式</h2>
+      <p>
+        如果现在先求稳，不考虑极致调功精度，建议第一版直接采用下面这组参数：
+      </p>
+      <ul>
+        <li><strong>控制窗口：</strong><code>500 ms</code></li>
+        <li><strong>基本片段：</strong><code>50 ms</code></li>
+        <li><strong>每窗口片段数：</strong><code>10</code></li>
+        <li><strong>TRIAC_EN 驱动方式：</strong>在“开”的片段内持续保持高电平，在“关”的片段内持续保持低电平</li>
+        <li><strong>PID 输出映射：</strong><code>0~1000 permille</code> 映射为 0~10 个导通片段</li>
+      </ul>
+
+      <h3>例子：目标功率 60%</h3>
+      <div class="timeline" aria-label="60 percent burst allocation over 500 ms">
+        <div class="slot on">50ms</div>
+        <div class="slot on">50ms</div>
+        <div class="slot on">50ms</div>
+        <div class="slot on">50ms</div>
+        <div class="slot on">50ms</div>
+        <div class="slot on">50ms</div>
+        <div class="slot">50ms</div>
+        <div class="slot">50ms</div>
+        <div class="slot">50ms</div>
+        <div class="slot">50ms</div>
+      </div>
+      <p>
+        上面 10 段里有 6 段为高电平，就是 60% 平均功率。由于 <code>MOC3063</code> 内部会在每次合适的零点处导通，
+        MCU 不需要自己去卡微秒级时序。
+      </p>
+    </section>
+
+    <section class="card" style="margin-top: 24px;">
+      <h2>4. 为什么我更推荐 500 ms，而不是更快</h2>
+      <ul>
+        <li>你的被控对象是加热管 + 雾气，不是裸加热丝，热响应明显滞后。</li>
+        <li><code>50 ms</code> 片段已经足够覆盖多个工频周期，可靠性比 10~20 ms 更高。</li>
+        <li><code>500 ms</code> 对人眼、示波器、日志都比较好理解，调试直观。</li>
+        <li>PID 算出来就算瞬间跳动，执行器层也不会过于敏感，系统更稳。</li>
+      </ul>
+
+      <div class="highlight">
+        如果后面发现 <strong>500 ms 响应太慢</strong>，可以试到 <strong>300 ms</strong>；
+        如果发现 <strong>功率跳变太明显</strong>，可以试到 <strong>800 ms 或 1000 ms</strong>。
+      </div>
+    </section>
+
+    <section class="card" style="margin-top: 24px;">
+      <h2>5. 如何把 PID 输出映射得更细</h2>
+      <p>
+        <code>500 ms / 50 ms</code> 只有 10 个片段，单窗口内分辨率就是 10%。这对高延迟热系统通常已经够用，
+        但如果你想让 33%、37% 这种值也更平滑，可以用 <strong>跨窗口误差累计</strong> 的办法补细分辨率。
+      </p>
+
+      <h3>建议做法</h3>
+      <ul>
+        <li>先按窗口内整数片段数做一次粗分配。</li>
+        <li>不足的那一部分，用累计误差在后续几个窗口里补回来。</li>
+        <li>本质上类似 sigma-delta / Bresenham 的平均化分配。</li>
+      </ul>
+
+      <p>例如目标 35%：</p>
+      <ul>
+        <li>窗口 A：3 段导通 = 30%</li>
+        <li>窗口 B：4 段导通 = 40%</li>
+        <li>两个窗口平均下来就是 35%</li>
+      </ul>
+    </section>
+
+    <section class="card" style="margin-top: 24px;">
+      <h2>6. 控制周期和执行器周期不要混在一起</h2>
+      <p>
+        即使执行器用的是 500 ms 的 burst 窗口，也不代表传感器或 PID 必须 500 ms 才算一次。
+        更合理的拆法是：
+      </p>
+      <table>
+        <thead>
+          <tr>
+            <th>层级</th>
+            <th>建议周期</th>
+            <th>用途</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>传感器采样</td>
+            <td>20~50 ms</td>
+            <td>维持温度数据新鲜度</td>
+          </tr>
+          <tr>
+            <td>PID 计算</td>
+            <td>100~200 ms</td>
+            <td>避免对高延迟对象算得太快</td>
+          </tr>
+          <tr>
+            <td>执行器功率窗口</td>
+            <td>500 ms</td>
+            <td>决定 TRIAC_EN 的开关分配</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="card" style="margin-top: 24px;">
+      <h2>7. 这一路最容易犯的几个错误</h2>
+      <ul>
+        <li>把 <code>TRIAC_EN</code> 当成普通 PWM，频率设得太高。</li>
+        <li>只给很窄的高脉冲，结果恰好没碰到零点，整次控制无效。</li>
+        <li>PID 每 20 ms 就大幅改输出，但执行器层也跟着快速抖动，导致调试上看起来很乱。</li>
+        <li>没有把高延迟对象和快速驱动对象区分开，想当然地沿用直热板或风扇 PWM 的经验。</li>
+      </ul>
+    </section>
+
+    <section class="footer">
+      <p>
+        建议你先按 <strong>500 ms 窗口 / 50 ms 片段</strong> 跑第一版。如果验证后觉得温升太慢或功率太粗，
+        再在 <strong>300~1000 ms</strong> 之间微调窗口即可。下一步如果你确认这个方向，我可以直接把当前 Zephyr
+        代码改成“完全不依赖 ZCD_OUT、只按时间窗口控制 TRIAC_EN”的实现。
+      </p>
+    </section>
+  </main>
+</body>
+</html>

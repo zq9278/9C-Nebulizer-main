@@ -1,0 +1,16 @@
+description: Generic board GPIO resource for the nebulizer application
+
+compatible: "ninec,nebulizer-gpio"
+
+include: base.yaml
+
+properties:
+  gpios:
+    type: phandle-array
+    required: true
+  label:
+    type: string
+    required: false
+  debounce-ms:
+    type: int
+    required: false

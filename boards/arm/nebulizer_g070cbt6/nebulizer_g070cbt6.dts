@@ -1,0 +1,325 @@
+/dts-v1/;
+#include <st/g0/stm32g070Xb.dtsi>
+#include "pinctrl.dtsi"
+#include <zephyr/dt-bindings/adc/adc.h>
+#include <zephyr/dt-bindings/gpio/gpio.h>
+#include <zephyr/dt-bindings/pwm/pwm.h>
+#include <zephyr/dt-bindings/i2c/i2c.h>
+
+/ {
+	model = "9C Nebulizer STM32G070CBT6";
+	compatible = "ninec,nebulizer-g070cbt6";
+
+	chosen {
+		zephyr,console = &usart2;
+		zephyr,shell-uart = &usart2;
+		zephyr,sram = &sram0;
+		zephyr,flash = &flash0;
+	};
+
+		aliases {
+			host-uart = &usart1;
+			debug-uart = &usart2;
+			mist-uart = &usart4;
+			otp-reset = &otp_reset;
+			triac-en = &triac_en;
+			zcd-in = &zcd_in;
+			fan1-pwm = &fan1_pwm;
+		fan1-sense = &fan1_sense;
+		liquid-level = &liquid_level;
+		hall1 = &hall1;
+		hall2 = &hall2;
+		gx1832 = &gx1832;
+		ntc1 = &ntc1;
+		ntc2 = &ntc2;
+		ntc3 = &ntc3;
+		ntc4 = &ntc4;
+		ee-wp = &ee_wp;
+	};
+
+	pwmleds {
+		compatible = "pwm-leds";
+
+		fan1_pwm: fan1_pwm {
+			pwms = <&pwm3 1 PWM_USEC(100) PWM_POLARITY_NORMAL>;
+			label = "FAN1_PWM";
+		};
+	};
+
+	nebulizer_ios {
+		compatible = "simple-bus";
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		triac_en: gpio@0 {
+			compatible = "ninec,nebulizer-gpio";
+			reg = <0>;
+			label = "TRIAC_EN";
+			gpios = <&gpiob 1 GPIO_ACTIVE_HIGH>;
+		};
+
+		zcd_in: gpio@1 {
+			compatible = "ninec,nebulizer-gpio";
+			reg = <1>;
+			label = "ZCD_OUT";
+			gpios = <&gpiob 2 GPIO_ACTIVE_HIGH>;
+		};
+
+		liquid_level: gpio@2 {
+			compatible = "ninec,nebulizer-gpio";
+			reg = <2>;
+			label = "LIQUID_LEVEL";
+			gpios = <&gpiob 5 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>;
+			debounce-ms = <20>;
+		};
+
+		hall1: gpio@3 {
+			compatible = "ninec,nebulizer-gpio";
+			reg = <3>;
+			label = "HALL1";
+			gpios = <&gpioa 11 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>;
+			debounce-ms = <20>;
+		};
+
+		hall2: gpio@4 {
+			compatible = "ninec,nebulizer-gpio";
+			reg = <4>;
+			label = "HALL2";
+			gpios = <&gpioa 12 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>;
+			debounce-ms = <20>;
+		};
+
+		gx1832: gpio@5 {
+			compatible = "ninec,nebulizer-gpio";
+			reg = <5>;
+			label = "GX1832";
+			gpios = <&gpioa 10 (GPIO_ACTIVE_HIGH | GPIO_PULL_DOWN)>;
+		};
+
+		fan1_sense: gpio@6 {
+			compatible = "ninec,nebulizer-gpio";
+			reg = <6>;
+			label = "FAN1_SENSE";
+			gpios = <&gpioa 4 (GPIO_ACTIVE_HIGH | GPIO_PULL_UP)>;
+		};
+
+			ee_wp: gpio@7 {
+				compatible = "ninec,nebulizer-gpio";
+				reg = <7>;
+				label = "EE_WP";
+				gpios = <&gpiob 15 GPIO_ACTIVE_HIGH>;
+			};
+
+			otp_reset: gpio@8 {
+				compatible = "ninec,nebulizer-gpio";
+				reg = <8>;
+				label = "OTP_RESET";
+				gpios = <&gpioa 7 GPIO_ACTIVE_HIGH>;
+			};
+		};
+
+	triac0: triac {
+		compatible = "ninec,nebulizer-triac";
+		label = "TRIAC0";
+		enable-gpios = <&gpiob 1 GPIO_ACTIVE_HIGH>;
+		zcd-gpios = <&gpiob 2 GPIO_ACTIVE_HIGH>;
+		counter = <&triac_counter>;
+		pulse-width-us = <500>;
+		default-delay-us = <4000>;
+	};
+
+	ntc_bank {
+		compatible = "simple-bus";
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		ntc1: ntc@0 {
+			compatible = "ninec,nebulizer-ntc";
+			reg = <0>;
+			label = "OUTLET1_NTC";
+			io-channels = <&adc1 15>;
+			pullup-ohms = <10000>;
+			nominal-ohms = <10000>;
+			beta = <3950>;
+			nominal-temp-c = <25>;
+		};
+
+		ntc2: ntc@1 {
+			compatible = "ninec,nebulizer-ntc";
+			reg = <1>;
+			label = "KETTLE_NTC";
+			io-channels = <&adc1 11>;
+			pullup-ohms = <10000>;
+			nominal-ohms = <10000>;
+			beta = <3950>;
+			nominal-temp-c = <25>;
+		};
+
+		ntc3: ntc@2 {
+			compatible = "ninec,nebulizer-ntc";
+			reg = <2>;
+			label = "OUTLET2_NTC";
+			io-channels = <&adc1 16>;
+			pullup-ohms = <10000>;
+			nominal-ohms = <10000>;
+			beta = <3950>;
+			nominal-temp-c = <25>;
+		};
+
+		ntc4: ntc@3 {
+			compatible = "ninec,nebulizer-ntc";
+			reg = <3>;
+			label = "SPARE_NTC_PA5";
+			io-channels = <&adc1 5>;
+			pullup-ohms = <10000>;
+			nominal-ohms = <10000>;
+			beta = <3950>;
+			nominal-temp-c = <25>;
+		};
+	};
+
+	reserved_leds {
+		compatible = "gpio-leds";
+
+		reserved_led0: led0 {
+			gpios = <&gpioc 14 GPIO_ACTIVE_HIGH>;
+			label = "DBG_LED0";
+			status = "disabled";
+		};
+
+		reserved_led1: led1 {
+			gpios = <&gpioc 15 GPIO_ACTIVE_HIGH>;
+			label = "DBG_LED1";
+			status = "disabled";
+		};
+	};
+};
+
+&clk_lsi {
+	status = "okay";
+};
+
+&clk_hsi {
+	status = "okay";
+};
+
+&pll {
+	div-m = <1>;
+	mul-n = <8>;
+	div-p = <2>;
+	div-r = <2>;
+	clocks = <&clk_hsi>;
+	status = "okay";
+};
+
+&rcc {
+	clocks = <&pll>;
+	clock-frequency = <DT_FREQ_M(64)>;
+	ahb-prescaler = <1>;
+	apb1-prescaler = <1>;
+};
+
+&usart1 {
+	pinctrl-0 = <&usart1_tx_pb6 &usart1_rx_pb7>;
+	pinctrl-names = "default";
+	current-speed = <115200>;
+	status = "okay";
+};
+
+&usart2 {
+	pinctrl-0 = <&usart2_tx_pa2 &usart2_rx_pa3>;
+	pinctrl-names = "default";
+	current-speed = <115200>;
+	status = "okay";
+};
+
+&usart4 {
+	pinctrl-0 = <&usart4_tx_pa0 &usart4_rx_pa1>;
+	pinctrl-names = "default";
+	current-speed = <115200>;
+	status = "okay";
+};
+
+&timers3 {
+	st,prescaler = <0>;
+	status = "okay";
+
+	pwm3: pwm {
+		status = "okay";
+		pinctrl-0 = <&tim3_ch1_pa6>;
+		pinctrl-names = "default";
+	};
+};
+
+&timers15 {
+	st,prescaler = <63>;
+	status = "okay";
+
+	triac_counter: counter {
+		status = "okay";
+	};
+};
+
+&adc1 {
+	#address-cells = <1>;
+	#size-cells = <0>;
+	pinctrl-0 = <&adc1_in11_pb10 &adc1_in15_pb11
+		     &adc1_in16_pb12 &adc1_in5_pa5>;
+	pinctrl-names = "default";
+	st,adc-clock-source = "SYNC";
+	st,adc-prescaler = <4>;
+	status = "okay";
+	vref-mv = <3300>;
+
+	channel@5 {
+		reg = <5>;
+		zephyr,gain = "ADC_GAIN_1";
+		zephyr,reference = "ADC_REF_INTERNAL";
+		zephyr,acquisition-time = <ADC_ACQ_TIME_DEFAULT>;
+		zephyr,resolution = <12>;
+	};
+
+	channel@b {
+		reg = <11>;
+		zephyr,gain = "ADC_GAIN_1";
+		zephyr,reference = "ADC_REF_INTERNAL";
+		zephyr,acquisition-time = <ADC_ACQ_TIME_DEFAULT>;
+		zephyr,resolution = <12>;
+	};
+
+	channel@f {
+		reg = <15>;
+		zephyr,gain = "ADC_GAIN_1";
+		zephyr,reference = "ADC_REF_INTERNAL";
+		zephyr,acquisition-time = <ADC_ACQ_TIME_DEFAULT>;
+		zephyr,resolution = <12>;
+	};
+
+	channel@10 {
+		reg = <16>;
+		zephyr,gain = "ADC_GAIN_1";
+		zephyr,reference = "ADC_REF_INTERNAL";
+		zephyr,acquisition-time = <ADC_ACQ_TIME_DEFAULT>;
+		zephyr,resolution = <12>;
+	};
+};
+
+&i2c2 {
+	pinctrl-0 = <&i2c2_scl_pb13 &i2c2_sda_pb14>;
+	pinctrl-names = "default";
+	clock-frequency = <I2C_BITRATE_STANDARD>;
+	status = "okay";
+};
+
+&flash0 {
+	partitions {
+		compatible = "fixed-partitions";
+		#address-cells = <1>;
+		#size-cells = <1>;
+
+		storage_partition: partition@1f000 {
+			label = "storage";
+			reg = <0x0001f000 DT_SIZE_K(4)>;
+		};
+	};
+};
