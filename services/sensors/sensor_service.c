@@ -1,9 +1,10 @@
 #include "sensor_service.h"
 
 #include <errno.h>
-
+#include <stdlib.h>
 #include <drivers_app/adc/adc_manager.h>
 #include <drivers_app/adc/ntc_convert.h>
+#include <drivers_app/adc/ntc_table.h>
 #include <drivers_app/gpio/input_gpio.h>
 #include <platform/board_devices.h>
 #include <services/sensors/gx1832_service.h>
@@ -15,6 +16,7 @@ LOG_MODULE_REGISTER(sensor_service, CONFIG_NEBULIZER_LOG_LEVEL);
 
 static const struct board_resources *res;
 static uint16_t ntc_filtered[BOARD_NTC_COUNT];
+static uint32_t ntc_diag_last_log_ms;
 
 int sensor_service_init(void)
 {
@@ -55,6 +57,16 @@ int sensor_service_init(void)
 		return ret;
 	}
 
+	size_t ntc_table_count = 0U;
+	const struct ntc_table_entry *ntc_table = ntc_table_get_default(&ntc_table_count);
+	if ((ntc_table != NULL) && (ntc_table_count > 0U)) {
+		const struct ntc_table_entry *last = &ntc_table[ntc_table_count - 1U];
+		LOG_INF("ntc table max %d.%d C resistance=%u ohm",
+			last->temp_deci_c / 10,
+			abs(last->temp_deci_c % 10),
+			(unsigned int)last->resistance_ohms);
+	}
+
 	return sensor_snapshot_init();
 }
 
@@ -84,10 +96,12 @@ int sensor_service_sample(sensor_snapshot_t *snapshot)
 	memset(snapshot, 0, sizeof(*snapshot));
 	snapshot->sample_uptime_ms = k_uptime_get_32();
 	snapshot->sequence = snapshot->sample_uptime_ms;
+	snapshot->ntc_raw_max = sample.raw_max;
 
 	for (size_t i = 0; i < BOARD_NTC_COUNT; ++i) {
 		struct ntc_convert_result converted;
 
+		snapshot->ntc_raw[i] = sample.raw[i];
 		ntc_filtered[i] = sensor_service_filter(ntc_filtered[i], sample.raw[i]);
 		converted = ntc_convert_from_raw(ntc_filtered[i], sample.raw_max, 10000U);
 		snapshot->ntc_deci_c[i] = converted.temp_deci_c;
@@ -99,6 +113,17 @@ int sensor_service_sample(sensor_snapshot_t *snapshot)
 			snapshot->ntc_open[i] = false;
 			snapshot->ntc_short[i] = false;
 		}
+	}
+
+	if ((snapshot->ntc_deci_c[BOARD_NTC_KETTLE] >= 790) &&
+	    ((snapshot->sample_uptime_ms - ntc_diag_last_log_ms) >= 3000U)) {
+		ntc_diag_last_log_ms = snapshot->sample_uptime_ms;
+		LOG_INF("kettle ntc diag temp=%d.%dC raw=%u filt=%u raw_max=%u",
+			snapshot->ntc_deci_c[BOARD_NTC_KETTLE] / 10,
+			abs(snapshot->ntc_deci_c[BOARD_NTC_KETTLE] % 10),
+			snapshot->ntc_raw[BOARD_NTC_KETTLE],
+			ntc_filtered[BOARD_NTC_KETTLE],
+			snapshot->ntc_raw_max);
 	}
 
 	input_gpio_read(&res->liquid_level, &snapshot->liquid_present);

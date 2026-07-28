@@ -8,7 +8,15 @@ import serial
 import serial.tools.list_ports
 from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 
-from models import ConfigModel, MaintenanceModel, PidModel, RuntimeModel, StatusModel
+from models import (
+    ConfigModel,
+    KettleTargetModel,
+    MaintenanceModel,
+    OutletControlModel,
+    PidModel,
+    RuntimeModel,
+    StatusModel,
+)
 from protocol import HostCmd, HostFrameType, build_command, extract_frames, parse_ack
 
 MIST_FAULT_LOW_WATER = 0x0009
@@ -40,6 +48,8 @@ class SerialClient(QObject):
     status_updated = pyqtSignal(object)
     config_updated = pyqtSignal(object)
     pid_updated = pyqtSignal(object)
+    outlet_control_updated = pyqtSignal(object)
+    kettle_target_updated = pyqtSignal(object)
     runtime_updated = pyqtSignal(object)
     maintenance_updated = pyqtSignal(object)
 
@@ -103,7 +113,9 @@ class SerialClient(QObject):
         self.log_message.emit(f"connected {device} @ {baudrate}")
 
         self.request_config()
-        self.request_pid()
+        self.request_outlet_control()
+        self.request_kettle_pid()
+        self.request_kettle_target()
         self.request_status()
         self.request_runtime()
         self.request_maintenance()
@@ -234,6 +246,44 @@ class SerialClient(QObject):
             )
             return
 
+        if frame.frame_type == HostFrameType.OUTLET_CTRL and len(payload) >= 16:
+            outlet = OutletControlModel(
+                base_offset_deci_c=_sle16(payload, 0),
+                target_margin_deci_c=_sle16(payload, 2),
+                air_low_offset_deci_c=_sle16(payload, 4),
+                air_mid_offset_deci_c=_sle16(payload, 6),
+                air_high_offset_deci_c=_sle16(payload, 8),
+                mist_low_offset_deci_c=_sle16(payload, 10),
+                mist_mid_offset_deci_c=_sle16(payload, 12),
+                mist_high_offset_deci_c=_sle16(payload, 14),
+            )
+            self.outlet_control_updated.emit(outlet)
+            self.log_message.emit(
+                "rx outlet control "
+                f"base={outlet.base_offset_deci_c / 10.0:.1f}C "
+                f"margin={outlet.target_margin_deci_c / 10.0:.1f}C "
+                f"air={outlet.air_low_offset_deci_c}/"
+                f"{outlet.air_mid_offset_deci_c}/"
+                f"{outlet.air_high_offset_deci_c} "
+                f"mist={outlet.mist_low_offset_deci_c}/"
+                f"{outlet.mist_mid_offset_deci_c}/"
+                f"{outlet.mist_high_offset_deci_c}"
+            )
+            return
+
+        if frame.frame_type == HostFrameType.KETTLE_TARGET and len(payload) >= 3:
+            kettle_target = KettleTargetModel(
+                enabled=bool(payload[0]),
+                target_deci_c=_sle16(payload, 1),
+            )
+            self.kettle_target_updated.emit(kettle_target)
+            self.log_message.emit(
+                "rx kettle target "
+                f"enabled={int(kettle_target.enabled)} "
+                f"target={kettle_target.target_deci_c / 10.0:.1f}C"
+            )
+            return
+
         if frame.frame_type == HostFrameType.RUNTIME and len(payload) >= 46:
             runtime = RuntimeModel(
                 state=payload[0],
@@ -275,6 +325,18 @@ class SerialClient(QObject):
                 runtime.pid_integral_limit_permille = _sle32(payload, 58)
             if len(payload) >= 66:
                 runtime.pid_i_term_raw = _sle32(payload, 62)
+            if len(payload) >= 72:
+                runtime.kettle_pid_temp_deci_c = _sle16(payload, 66)
+                runtime.kettle_pid_target_deci_c = _sle16(payload, 68)
+                runtime.kettle_pid_error_deci_c = _sle16(payload, 70)
+            if len(payload) >= 82:
+                runtime.ntc_raw = [
+                    _le16(payload, 72),
+                    _le16(payload, 74),
+                    _le16(payload, 76),
+                    _le16(payload, 78),
+                ]
+                runtime.ntc_raw_max = _le16(payload, 80)
             self.runtime_updated.emit(runtime)
             self.log_message.emit(
                 "rx runtime "
@@ -284,7 +346,11 @@ class SerialClient(QObject):
                 f"kp={runtime.pid_kp_milli / 1000.0:.3f} "
                 f"ki={runtime.pid_ki_milli / 1000.0:.3f} "
                 f"kd={runtime.pid_kd_milli / 1000.0:.3f} "
-                f"i_term={runtime.pid_i_term_raw / 1000.0:.1f}"
+                f"i_term={runtime.pid_i_term_raw / 1000.0:.1f} "
+                f"kettle_pid={runtime.kettle_pid_temp_deci_c / 10.0:.1f}/"
+                f"{runtime.kettle_pid_target_deci_c / 10.0:.1f}C "
+                f"err={runtime.kettle_pid_error_deci_c / 10.0:.1f}C "
+                f"kettle_raw={runtime.ntc_raw[3]}/{runtime.ntc_raw_max}"
             )
             return
 
@@ -315,6 +381,15 @@ class SerialClient(QObject):
 
     def request_pid(self) -> None:
         self._send(HostCmd.GET_PID)
+
+    def request_kettle_pid(self) -> None:
+        self._send(HostCmd.GET_KETTLE_PID)
+
+    def request_outlet_control(self) -> None:
+        self._send(HostCmd.GET_OUTLET_CONTROL)
+
+    def request_kettle_target(self) -> None:
+        self._send(HostCmd.GET_KETTLE_TARGET)
 
     def request_runtime(self) -> None:
         self._send(HostCmd.GET_RUNTIME)
@@ -363,6 +438,47 @@ class SerialClient(QObject):
             + i_limit_permille.to_bytes(4, "little", signed=True)
         )
         self._send(HostCmd.SET_PID, payload)
+
+    def apply_kettle_pid(
+        self, kp_milli: int, ki_milli: int, kd_milli: int, i_limit_permille: int
+    ) -> None:
+        payload = (
+            kp_milli.to_bytes(4, "little", signed=True)
+            + ki_milli.to_bytes(4, "little", signed=True)
+            + kd_milli.to_bytes(4, "little", signed=True)
+            + i_limit_permille.to_bytes(4, "little", signed=True)
+        )
+        self._send(HostCmd.SET_KETTLE_PID, payload)
+
+    def apply_outlet_control(
+        self,
+        base_offset_deci_c: int,
+        target_margin_deci_c: int,
+        air_low_offset_deci_c: int,
+        air_mid_offset_deci_c: int,
+        air_high_offset_deci_c: int,
+        mist_low_offset_deci_c: int,
+        mist_mid_offset_deci_c: int,
+        mist_high_offset_deci_c: int,
+    ) -> None:
+        values = (
+            base_offset_deci_c,
+            target_margin_deci_c,
+            air_low_offset_deci_c,
+            air_mid_offset_deci_c,
+            air_high_offset_deci_c,
+            mist_low_offset_deci_c,
+            mist_mid_offset_deci_c,
+            mist_high_offset_deci_c,
+        )
+        payload = b"".join(value.to_bytes(2, "little", signed=True) for value in values)
+        self._send(HostCmd.SET_OUTLET_CONTROL, payload)
+
+    def apply_kettle_target(self, enabled: bool, target_deci_c: int) -> None:
+        payload = bytes([1 if enabled else 0]) + target_deci_c.to_bytes(
+            2, "little", signed=True
+        )
+        self._send(HostCmd.SET_KETTLE_TARGET, payload)
 
     def enter_maintenance(self) -> None:
         self._send(HostCmd.ENTER_MAINTENANCE)

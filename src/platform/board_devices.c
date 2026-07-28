@@ -62,9 +62,9 @@ static struct board_resources board_res = {
 
 static const bool ntc_enabled[BOARD_NTC_COUNT] = {
 	[BOARD_NTC_OUTLET1] = true,
-	[BOARD_NTC_KETTLE] = true,
+	[BOARD_NTC_RESERVED] = true,
 	[BOARD_NTC_OUTLET2] = true,
-	[BOARD_NTC_SPARE] = false,
+	[BOARD_NTC_KETTLE] = true,
 };
 
 /* 公共 UART 就绪检查函数，避免三份重复代码。 */

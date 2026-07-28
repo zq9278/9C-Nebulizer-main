@@ -5,6 +5,7 @@
 
 #include <nebulizer/protocol_ids.h>
 #include <nebulizer/app_config.h>
+#include <platform/board_resources.h>
 #include <protocols/common/frame_codec.h>
 
 static void host_put_le16(uint8_t *buf, uint16_t value)
@@ -33,6 +34,9 @@ int host_protocol_decode_frame(const struct frame_codec_frame *frame, app_event_
 	evt->data.host_cmd.command_id = frame->payload[0];
 	evt->data.host_cmd.frame_id = frame->frame_id;
 	evt->data.host_cmd.data_len = frame->payload_len - 1U;
+	if (evt->data.host_cmd.data_len > sizeof(evt->data.host_cmd.data)) {
+		return -EMSGSIZE;
+	}
 	if (evt->data.host_cmd.data_len > 0U) {
 		memcpy(evt->data.host_cmd.data, &frame->payload[1], evt->data.host_cmd.data_len);
 	}
@@ -71,8 +75,8 @@ int host_protocol_encode_status(uint16_t frame_id, const telemetry_status_t *sta
 	payload[4] = (uint8_t)(status->config.target_temp_deci_c >> 8);
 	payload[5] = (uint8_t)(status->sensors.ntc_deci_c[0] & 0xFFU);
 	payload[6] = (uint8_t)(status->sensors.ntc_deci_c[0] >> 8);
-	payload[7] = (uint8_t)(status->sensors.ntc_deci_c[1] & 0xFFU);
-	payload[8] = (uint8_t)(status->sensors.ntc_deci_c[1] >> 8);
+	payload[7] = (uint8_t)(status->sensors.ntc_deci_c[BOARD_NTC_KETTLE] & 0xFFU);
+	payload[8] = (uint8_t)(status->sensors.ntc_deci_c[BOARD_NTC_KETTLE] >> 8);
 	payload[9] = (uint8_t)status->config.air_level;
 	payload[10] = (uint8_t)status->config.mist_level;
 	payload[11] = status->sensors.liquid_present ? 1U : 0U;
@@ -128,10 +132,52 @@ int host_protocol_encode_pid(uint16_t frame_id, const pid_params_t *pid,
 				  out, out_size, encoded_len);
 }
 
+int host_protocol_encode_outlet_control(uint16_t frame_id,
+					const outlet_control_params_t *params,
+					uint8_t *out, size_t out_size,
+					size_t *encoded_len)
+{
+	uint8_t payload[16];
+
+	if (params == NULL) {
+		return -EINVAL;
+	}
+
+	host_put_le16(&payload[0], (uint16_t)params->base_offset_deci_c);
+	host_put_le16(&payload[2], (uint16_t)params->target_margin_deci_c);
+	host_put_le16(&payload[4], (uint16_t)params->air_low_offset_deci_c);
+	host_put_le16(&payload[6], (uint16_t)params->air_mid_offset_deci_c);
+	host_put_le16(&payload[8], (uint16_t)params->air_high_offset_deci_c);
+	host_put_le16(&payload[10], (uint16_t)params->mist_low_offset_deci_c);
+	host_put_le16(&payload[12], (uint16_t)params->mist_mid_offset_deci_c);
+	host_put_le16(&payload[14], (uint16_t)params->mist_high_offset_deci_c);
+
+	return frame_codec_encode(frame_id, HOST_FRAME_TYPE_OUTLET_CTRL, payload, sizeof(payload),
+				  out, out_size, encoded_len);
+}
+
+int host_protocol_encode_kettle_target(uint16_t frame_id,
+				       const kettle_target_override_t *override,
+				       uint8_t *out, size_t out_size,
+				       size_t *encoded_len)
+{
+	uint8_t payload[3];
+
+	if (override == NULL) {
+		return -EINVAL;
+	}
+
+	payload[0] = override->enabled ? 1U : 0U;
+	host_put_le16(&payload[1], (uint16_t)override->target_deci_c);
+
+	return frame_codec_encode(frame_id, HOST_FRAME_TYPE_KETTLE_TARGET, payload,
+				  sizeof(payload), out, out_size, encoded_len);
+}
+
 int host_protocol_encode_runtime(uint16_t frame_id, const telemetry_status_t *status,
 				 uint8_t *out, size_t out_size, size_t *encoded_len)
 {
-	uint8_t payload[66];
+	uint8_t payload[82];
 	size_t payload_len = 46U;
 
 	if (status == NULL) {
@@ -173,7 +219,15 @@ int host_protocol_encode_runtime(uint16_t frame_id, const telemetry_status_t *st
 		host_put_le32(&payload[54], (uint32_t)status->heat_pid.kd_milli);
 		host_put_le32(&payload[58], (uint32_t)status->heat_pid.integral_limit_permille);
 		host_put_le32(&payload[62], (uint32_t)status->heat_diag.i_term_raw);
-		payload_len = 66U;
+		host_put_le16(&payload[66], (uint16_t)status->heat_diag.kettle_temp_deci_c);
+		host_put_le16(&payload[68], (uint16_t)status->heat_diag.kettle_target_deci_c);
+		host_put_le16(&payload[70], (uint16_t)status->heat_diag.kettle_error_deci_c);
+		host_put_le16(&payload[72], status->sensors.ntc_raw[0]);
+		host_put_le16(&payload[74], status->sensors.ntc_raw[1]);
+		host_put_le16(&payload[76], status->sensors.ntc_raw[2]);
+		host_put_le16(&payload[78], status->sensors.ntc_raw[3]);
+		host_put_le16(&payload[80], status->sensors.ntc_raw_max);
+		payload_len = 82U;
 	}
 
 	return frame_codec_encode(frame_id, HOST_FRAME_TYPE_RUNTIME, payload, payload_len,

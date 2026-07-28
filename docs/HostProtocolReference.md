@@ -91,6 +91,7 @@
 | `HOST_FRAME_TYPE_PID` | `0x07` | 主控 -> 上位机 | PID 参数 |
 | `HOST_FRAME_TYPE_RUNTIME` | `0x08` | 主控 -> 上位机 | 完整运行时快照 |
 | `HOST_FRAME_TYPE_MAINT` | `0x09` | 主控 -> 上位机 | 维护模式状态 |
+| `HOST_FRAME_TYPE_OUTLET_CTRL` | `0x0A` | 主控 -> 上位机 | 出雾口外环调节参数 |
 
 ## 4. `frame_id` 使用规则
 
@@ -147,7 +148,9 @@
 | `HOST_CMD_SET_TIME` | `0x12` | `time_min u16 LE` | 设置治疗时间，单位分钟 | `ACK` |
 | `HOST_CMD_SET_AIR_LEVEL` | `0x13` | `air_level u8` | 设置风量档位 | `ACK` |
 | `HOST_CMD_SET_MIST_LEVEL` | `0x14` | `mist_level u8` | 设置雾量档位 | `ACK` |
-| `HOST_CMD_SET_PID` | `0x29` | `kp i32 LE + ki i32 LE + kd i32 LE + i_limit i32 LE` | 设置 PID 参数 | 先 `PID`，后 `ACK` |
+| `HOST_CMD_SET_PID` | `0x29` | `kp i32 LE + ki i32 LE + kd i32 LE + i_limit i32 LE` | 兼容旧工具：设置当前热控 PID | 先 `PID`，后 `ACK` |
+| `HOST_CMD_SET_KETTLE_PID` | `0x32` | `kp i32 LE + ki i32 LE + kd i32 LE + i_limit i32 LE` | 设置锅体内层 PID 参数 | 先 `PID`，后 `ACK` |
+| `HOST_CMD_SET_OUTLET_CONTROL` | `0x34` | 8 个 `i16 LE` 外环参数 | 设置出雾口外环调节参数 | 先 `OUTLET_CTRL`，后 `ACK` |
 
 ### 7.2 运行控制类
 
@@ -166,9 +169,11 @@
 |---|---:|---|---|---|
 | `HOST_CMD_GET_STATUS` | `0x24` | 无 | 获取简版状态 | 先 `STATUS`，后 `ACK` |
 | `HOST_CMD_GET_CONFIG` | `0x27` | 无 | 获取当前配置 | 先 `CONFIG`，后 `ACK` |
-| `HOST_CMD_GET_PID` | `0x28` | 无 | 获取当前 PID | 先 `PID`，后 `ACK` |
+| `HOST_CMD_GET_PID` | `0x28` | 无 | 兼容旧工具：获取当前热控 PID | 先 `PID`，后 `ACK` |
 | `HOST_CMD_GET_RUNTIME` | `0x2A` | 无 | 获取完整运行时 | 先 `RUNTIME`，后 `ACK` |
 | `HOST_CMD_GET_MAINTENANCE` | `0x30` | 无 | 获取维护模式状态 | 先 `MAINT`，后 `ACK` |
+| `HOST_CMD_GET_KETTLE_PID` | `0x31` | 无 | 获取锅体内层 PID 参数 | 先 `PID`，后 `ACK` |
+| `HOST_CMD_GET_OUTLET_CONTROL` | `0x33` | 无 | 获取出雾口外环调节参数 | 先 `OUTLET_CTRL`，后 `ACK` |
 
 ### 7.4 维护模式类
 
@@ -305,6 +310,12 @@
 
 ### 8.6 PID 参数
 
+当前热控已经改为“出雾口外层 + 锅体内层 PID”。因此：
+
+- `GET_KETTLE_PID / SET_KETTLE_PID` 是推荐的新命令名
+- `GET_PID / SET_PID` 仍然保留，作为旧上位机兼容入口
+- 两组命令读写的是同一套锅体内层 PID 参数
+
 请求负载顺序：
 
 | 偏移 | 字段 | 类型 | 单位 |
@@ -340,34 +351,52 @@
 注意事项：
 
 - 当前 PID 都是非负数；负值会被拒绝
-- `GET_PID` 返回的 `triac_min_delay_us`、`triac_max_delay_us` 是只读硬件边界，不支持通过协议写入
+- `GET_PID / GET_KETTLE_PID` 返回的 `triac_min_delay_us`、`triac_max_delay_us` 是只读硬件边界，不支持通过协议写入
 
-### 8.7 温控与功率限制相关配置
+### 8.7 出雾口外环调节参数
 
-#### 8.7.1 目标温度附近的功率封顶
+`GET_OUTLET_CONTROL / SET_OUTLET_CONTROL` 用于调节外层出雾口温控模块。
 
-主控在 PID 输出之后，会再做一次“近目标温度限幅”，对最终加热功率做上限裁剪。
+该模块不直接输出加热功率，而是把“出雾口目标温度”换算成“锅体虚拟目标温度”：
 
-当前代码实际数值：
+- `base_offset_deci_c`：基础补偿
+- `air_*_offset_deci_c`：风量前馈补偿
+- `mist_*_offset_deci_c`：雾量前馈补偿
+- `target_margin_deci_c`：锅体虚拟目标距离临时停热阈值的安全余量
 
-| 条件 | 温差阈值 | 最大输出 |
-|---|---|---|
-| `error <= APP_HEAT_NEAR_TARGET_BAND1_DECI_C` | `20`，即 `2.0°C` | `APP_HEAT_NEAR_TARGET_MAX1_PERCENT = 5%` |
-| `error <= APP_HEAT_NEAR_TARGET_BAND2_DECI_C` | `30`，即 `3.0°C` | `APP_HEAT_NEAR_TARGET_MAX2_PERCENT = 20%` |
-| `error <= APP_HEAT_NEAR_TARGET_BAND3_DECI_C` | `100`，即 `10.0°C` | `APP_HEAT_NEAR_TARGET_MAX3_PERCENT = 100%` |
+负载顺序：
 
-实现含义：
+| 偏移 | 字段 | 类型 | 单位 |
+|---|---|---|---|
+| 0 | `base_offset_deci_c` | `i16 LE` | `0.1°C` |
+| 2 | `target_margin_deci_c` | `i16 LE` | `0.1°C` |
+| 4 | `air_low_offset_deci_c` | `i16 LE` | `0.1°C` |
+| 6 | `air_mid_offset_deci_c` | `i16 LE` | `0.1°C` |
+| 8 | `air_high_offset_deci_c` | `i16 LE` | `0.1°C` |
+| 10 | `mist_low_offset_deci_c` | `i16 LE` | `0.1°C` |
+| 12 | `mist_mid_offset_deci_c` | `i16 LE` | `0.1°C` |
+| 14 | `mist_high_offset_deci_c` | `i16 LE` | `0.1°C` |
 
-- 这不是“把 PID 输出再乘一个百分比”
-- 而是“把最终允许输出限制到某个上限”
-- 例如 PID 算出 `600 permille`，但当前误差只剩 `2.0°C`，最终会被裁到 `50 permille`
+当前范围：
 
-重要注意：
+- `base_offset_deci_c`: `0..200`
+- `target_margin_deci_c`: `0..100`
+- 其他前馈补偿: `0..100`
 
-- `include/nebulizer/app_config.h` 中这几项的注释文字目前与数值已经不一致
-- 协议文档和上位机逻辑应以宏的实际数值为准，不要以注释为准
+错误码：
 
-#### 8.7.2 锅体 65°C 加热切断
+- 负载长度不足 `16` 字节，或任一参数超范围时返回 `12`
+
+### 8.8 温控与功率限制相关配置
+
+#### 8.8.1 目标温度附近的功率封顶
+
+当前代码已经移除“近目标温度限幅”逻辑。
+
+主控不再根据出雾口温差额外裁剪最终加热功率；加热输出主要由锅体内层 PID、
+锅体虚拟目标温度、锅体临时停热阈值、出口过温保护和锅体过温保护共同决定。
+
+#### 8.8.2 锅体 65°C 加热切断
 
 当前项目已增加“锅体达到或超过 `65.0°C` 时暂停加热”的逻辑：
 
@@ -376,7 +405,7 @@
 - 恢复：锅体温度回到 `65.0°C` 以下后自动恢复 PID 加热
 - 特点：这不是整机故障，不影响风扇、雾化和其他功能
 
-#### 8.7.3 故障级过温保护
+#### 8.8.3 故障级过温保护
 
 当前仍保留更高等级的故障阈值：
 
@@ -385,7 +414,7 @@
 
 这两类属于故障保护，会进入整机故障流程。
 
-### 8.8 维护模式参数
+### 8.9 维护模式参数
 
 维护模式结构：
 
@@ -554,12 +583,13 @@
 负载长度：
 
 - `46` 字节：基础版
-- `66` 字节：附带 PID 运行调试参数
+- `66` 字节：附带旧版 PID 运行调试参数
+- `72` 字节：附带锅体 PID 运行调试参数
 
 当前工程实际值：
 
 - `APP_HOST_RUNTIME_PID_PARAMS_ENABLE = 1`
-- 因此当前构建下实际发送 `66` 字节
+- 因此当前构建下实际发送 `72` 字节
 
 基础字段表：
 
@@ -603,6 +633,9 @@
 | 54 | `pid_kd_milli` | `i32 LE` | x1000 |
 | 58 | `pid_integral_limit_permille` | `i32 LE` | permille |
 | 62 | `pid_i_term_raw` | `i32 LE` | 内部原始量 |
+| 66 | `kettle_pid_temp_deci_c` | `i16 LE` | `0.1°C` |
+| 68 | `kettle_pid_target_deci_c` | `i16 LE` | `0.1°C` |
+| 70 | `kettle_pid_error_deci_c` | `i16 LE` | `0.1°C` |
 
 ### 10.5 `MAINT` 帧
 
@@ -618,6 +651,25 @@
 | 1 | `fan_level` | `u8` | 枚举 | 手动风量档位 |
 | 2 | `mist_level` | `u8` | 枚举 | 手动雾量档位 |
 | 3 | `heat_output_permille` | `u16 LE` | permille | 手动加热功率 |
+
+### 10.6 `OUTLET_CTRL` 帧
+
+负载长度：
+
+- 固定 `16` 字节
+
+字段表：
+
+| 偏移 | 字段 | 类型 | 单位 | 说明 |
+|---|---|---|---|---|
+| 0 | `base_offset_deci_c` | `i16 LE` | `0.1°C` | 基础补偿 |
+| 2 | `target_margin_deci_c` | `i16 LE` | `0.1°C` | 锅体目标安全余量 |
+| 4 | `air_low_offset_deci_c` | `i16 LE` | `0.1°C` | 低风量前馈 |
+| 6 | `air_mid_offset_deci_c` | `i16 LE` | `0.1°C` | 中风量前馈 |
+| 8 | `air_high_offset_deci_c` | `i16 LE` | `0.1°C` | 高风量前馈 |
+| 10 | `mist_low_offset_deci_c` | `i16 LE` | `0.1°C` | 低雾量前馈 |
+| 12 | `mist_mid_offset_deci_c` | `i16 LE` | `0.1°C` | 中雾量前馈 |
+| 14 | `mist_high_offset_deci_c` | `i16 LE` | `0.1°C` | 高雾量前馈 |
 
 ## 11. 错误码表
 
@@ -636,6 +688,7 @@
 | `9` | 手动雾化参数非法或维护模式未激活 |
 | `10` | 手动加热参数非法或维护模式未激活 |
 | `11` | `RESUME` 时维护模式仍激活 |
+| `12` | 出雾口外环参数非法 |
 | `0x7F` | 未知命令 |
 
 ### 11.2 状态/运行条件错误码

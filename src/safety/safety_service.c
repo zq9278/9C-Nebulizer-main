@@ -1,6 +1,9 @@
 #include "safety_service.h"
 
+#include <stdlib.h>
+
 #include <nebulizer/app_config.h>
+#include <platform/board_resources.h>
 #include <services/fan/fan_control.h>
 #include <services/heat/heat_control.h>
 #include <services/mist/mist_service.h>
@@ -17,6 +20,8 @@ static struct {
 	uint8_t ntc_short_mask;
 	bool mist_fault_logged;
 	bool mist_offline_logged;
+	bool kettle_overtemp_logged;
+	bool outlet_overtemp_logged;
 } safety_log_state;
 
 /*
@@ -183,6 +188,46 @@ struct safety_result safety_service_poll(void)
 
 	/* Stainless pot water level interlock is temporarily disabled during bring-up. */
 
+	if (status.sensors.ntc_deci_c[BOARD_NTC_KETTLE] >= APP_KETTLE_OVER_TEMP_FAULT_DECI_C) {
+		if (!safety_log_state.kettle_overtemp_logged) {
+			LOG_ERR("kettle over temp: %d.%dC",
+				status.sensors.ntc_deci_c[BOARD_NTC_KETTLE] / 10,
+				abs(status.sensors.ntc_deci_c[BOARD_NTC_KETTLE] % 10));
+			safety_log_state.kettle_overtemp_logged = true;
+		}
+
+		if (status.fault == FAULT_KETTLE_OVER_TEMP) {
+			safety_service_enter_safe_state(FAULT_KETTLE_OVER_TEMP);
+			return result;
+		}
+
+		safety_service_enter_safe_state(FAULT_KETTLE_OVER_TEMP);
+		result.fault = FAULT_KETTLE_OVER_TEMP;
+		return result;
+	}
+
+	safety_log_state.kettle_overtemp_logged = false;
+
+	if (status.sensors.ntc_deci_c[BOARD_NTC_OUTLET2] >= APP_OUTLET1_OVER_TEMP_FAULT_DECI_C) {
+		if (!safety_log_state.outlet_overtemp_logged) {
+			LOG_ERR("outlet over temp: %d.%dC",
+				status.sensors.ntc_deci_c[BOARD_NTC_OUTLET2] / 10,
+				abs(status.sensors.ntc_deci_c[BOARD_NTC_OUTLET2] % 10));
+			safety_log_state.outlet_overtemp_logged = true;
+		}
+
+		if (status.fault == FAULT_OVER_TEMP) {
+			safety_service_enter_safe_state(FAULT_OVER_TEMP);
+			return result;
+		}
+
+		safety_service_enter_safe_state(FAULT_OVER_TEMP);
+		result.fault = FAULT_OVER_TEMP;
+		return result;
+	}
+
+	safety_log_state.outlet_overtemp_logged = false;
+
 	if (cover.changed) {
 		if (!cover.closed) {
 			LOG_WRN("cover open");
@@ -211,7 +256,14 @@ struct safety_result safety_service_poll(void)
 		return result;
 	}
 
-	for (size_t i = 0; i < 4; ++i) {
+	static const enum board_ntc_id safety_ntcs[] = {
+		BOARD_NTC_OUTLET1,
+		BOARD_NTC_OUTLET2,
+		BOARD_NTC_KETTLE,
+	};
+
+	for (size_t idx = 0; idx < ARRAY_SIZE(safety_ntcs); ++idx) {
+		size_t i = safety_ntcs[idx];
 		uint8_t bit = BIT(i);
 
 		if (status.sensors.ntc_open[i]) {

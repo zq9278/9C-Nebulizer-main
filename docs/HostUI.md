@@ -11,7 +11,7 @@ The design goal is to let a maintenance engineer or manufacturing tool:
 - monitor treatment state, fault state, temperatures, fan, mist board, cover, liquid level
 - send all main treatment control commands
 - read and write treatment parameters
-- read and tune heat PID online
+- switch between outlet loop tuning and kettle PID tuning online
 - observe protocol ACK/NACK, heartbeat, and communication exceptions
 
 ## Recommended Desktop Layout
@@ -35,13 +35,17 @@ Recommended layout:
   - air level
   - mist level
   - start / pause / resume / stop / clear fault
-- Left PID pane:
+- Left temperature debug channel:
+  - outlet loop parameter pane
+  - kettle PID parameter pane
+  - switching the channel also switches the trend view
+- Left Kettle PID Debug pane:
   - `Kp`
   - `Ki`
   - `Kd`
   - integral limit
-  - read PID
-  - apply PID
+  - read kettle PID
+  - apply kettle PID
 - Left maintenance pane:
   - enter/exit maintenance mode
   - manual fan level
@@ -115,8 +119,10 @@ Existing control commands on `USART1`:
 New commands added for host software completeness:
 
 - `HOST_CMD_GET_CONFIG`
-- `HOST_CMD_GET_PID`
-- `HOST_CMD_SET_PID`
+- `HOST_CMD_GET_KETTLE_PID`
+- `HOST_CMD_SET_KETTLE_PID`
+- `HOST_CMD_GET_OUTLET_CONTROL`
+- `HOST_CMD_SET_OUTLET_CONTROL`
 - `HOST_CMD_GET_RUNTIME`
 - `HOST_CMD_ENTER_MAINTENANCE`
 - `HOST_CMD_EXIT_MAINTENANCE`
@@ -153,6 +159,15 @@ PID frame:
   - `integral_limit_permille i32`
   - `triac_min_delay_us u16`
   - `triac_max_delay_us u16`
+
+Outlet control frame:
+
+- type: `HOST_FRAME_TYPE_OUTLET_CTRL`
+- fields:
+  - `base_offset_deci_c i16`
+  - `target_margin_deci_c i16`
+  - `air_low/mid/high_offset_deci_c i16`
+  - `mist_low/mid/high_offset_deci_c i16`
 
 Runtime frame:
 
@@ -201,22 +216,32 @@ Recommended refresh strategy for the PC app:
 - `GET_STATUS`: every `500 ms`
 - `GET_RUNTIME`: every `1000 ms`
 - `GET_CONFIG`: every `3000 ms` or after a config write
-- `GET_PID`: every `3000 ms` or after PID apply
+- `GET_OUTLET_CONTROL`: after connection or after outlet loop apply
+- `GET_KETTLE_PID`: after connection or after kettle PID apply
 - `GET_MAINTENANCE`: on maintenance page entry and after manual output writes
 
 This keeps the UI responsive without flooding `USART1`.
 
+## Temperature Tuning Path
+
+The host UI provides two switchable tuning channels:
+
+- `Outlet Temp Loop`: tunes how outlet target temperature is converted into kettle virtual target temperature.
+- `Kettle PID Loop`: tunes how kettle temperature follows the virtual kettle target.
+
+When the selected channel changes, the trend widget switches to the related curves automatically.
+
 ## PID Tuning Path
 
-Current firmware now exposes a fixed-point PID heat controller.
+Current firmware now exposes a fixed-point kettle inner-loop PID controller.
 
 Host workflow:
 
 1. Connect to `USART1`
-2. Read current PID via `HOST_CMD_GET_PID`
+2. Read current PID via `HOST_CMD_GET_KETTLE_PID`
 3. Display `Kp/Ki/Kd` as `value / 1000.0`
 4. Let the engineer edit values online
-5. Send `HOST_CMD_SET_PID`
+5. Send `HOST_CMD_SET_KETTLE_PID`
 6. Wait for ACK and updated PID frame
 7. Observe runtime frame values:
    - heat enable

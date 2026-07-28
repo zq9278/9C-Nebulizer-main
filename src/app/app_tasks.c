@@ -89,6 +89,16 @@ static bool app_parse_le32(const uint8_t *data, uint16_t len, int32_t *value)
 	return true;
 }
 
+static bool app_parse_le16_signed(const uint8_t *data, uint16_t len, int16_t *value)
+{
+	if (len < 2U) {
+		return false;
+	}
+
+	*value = (int16_t)((uint16_t)data[0] | ((uint16_t)data[1] << 8));
+	return true;
+}
+
 /*
  * 解析一组 PID 参数。
  *
@@ -111,6 +121,34 @@ static bool app_parse_pid_params(const uint8_t *data, uint16_t len, pid_params_t
 	       app_parse_le32(&data[4], len - 4U, &pid->ki_milli) &&
 	       app_parse_le32(&data[8], len - 8U, &pid->kd_milli) &&
 	       app_parse_le32(&data[12], len - 12U, &pid->integral_limit_permille);
+}
+
+static bool app_parse_outlet_params(const uint8_t *data, uint16_t len,
+				    outlet_control_params_t *params)
+{
+	if ((params == NULL) || (len < 16U)) {
+		return false;
+	}
+
+	return app_parse_le16_signed(&data[0], len, &params->base_offset_deci_c) &&
+	       app_parse_le16_signed(&data[2], len - 2U, &params->target_margin_deci_c) &&
+	       app_parse_le16_signed(&data[4], len - 4U, &params->air_low_offset_deci_c) &&
+	       app_parse_le16_signed(&data[6], len - 6U, &params->air_mid_offset_deci_c) &&
+	       app_parse_le16_signed(&data[8], len - 8U, &params->air_high_offset_deci_c) &&
+	       app_parse_le16_signed(&data[10], len - 10U, &params->mist_low_offset_deci_c) &&
+	       app_parse_le16_signed(&data[12], len - 12U, &params->mist_mid_offset_deci_c) &&
+	       app_parse_le16_signed(&data[14], len - 14U, &params->mist_high_offset_deci_c);
+}
+
+static bool app_parse_kettle_target_override(const uint8_t *data, uint16_t len,
+					     kettle_target_override_t *override)
+{
+	if ((override == NULL) || (len < 3U)) {
+		return false;
+	}
+
+	override->enabled = data[0] != 0U;
+	return app_parse_le16_signed(&data[1], len - 1U, &override->target_deci_c);
 }
 
 /*
@@ -250,6 +288,8 @@ static void app_handle_host_command(const host_cmd_event_t *cmd)
 	telemetry_status_t status;
 	treatment_config_t config;
 	pid_params_t pid;
+	outlet_control_params_t outlet_params;
+	kettle_target_override_t kettle_target;
 	app_event_t sm_evt = { 0 };
 	bool accepted = false;
 	treatment_state_t next_state;
@@ -383,12 +423,14 @@ static void app_handle_host_command(const host_cmd_event_t *cmd)
 		return;
 
 	case HOST_CMD_GET_PID:
+	case HOST_CMD_GET_KETTLE_PID:
 		heat_control_get_pid(&pid);
 		host_comm_service_send_pid(&pid);
 		host_comm_service_send_ack(cmd->frame_id, cmd->command_id, true, 0U);
 		return;
 
 	case HOST_CMD_SET_PID:
+	case HOST_CMD_SET_KETTLE_PID:
 		if (!app_parse_pid_params(cmd->data, cmd->data_len, &pid) ||
 		    (heat_control_set_pid(&pid) != 0)) {
 			error = 6U;
@@ -398,6 +440,42 @@ static void app_handle_host_command(const host_cmd_event_t *cmd)
 		(void)settings_store_save_pid_delayed(&pid);
 		app_context_set_heat_pid(&pid);
 		host_comm_service_send_pid(&pid);
+		host_comm_service_send_ack(cmd->frame_id, cmd->command_id, true, 0U);
+		return;
+
+	case HOST_CMD_GET_OUTLET_CONTROL:
+		heat_control_get_outlet_params(&outlet_params);
+		host_comm_service_send_outlet_control(&outlet_params);
+		host_comm_service_send_ack(cmd->frame_id, cmd->command_id, true, 0U);
+		return;
+
+	case HOST_CMD_SET_OUTLET_CONTROL:
+		if (!app_parse_outlet_params(cmd->data, cmd->data_len, &outlet_params) ||
+		    (heat_control_set_outlet_params(&outlet_params) != 0)) {
+			error = 12U;
+			break;
+		}
+
+		heat_control_get_outlet_params(&outlet_params);
+		host_comm_service_send_outlet_control(&outlet_params);
+		host_comm_service_send_ack(cmd->frame_id, cmd->command_id, true, 0U);
+		return;
+
+	case HOST_CMD_GET_KETTLE_TARGET:
+		heat_control_get_kettle_target_override(&kettle_target);
+		host_comm_service_send_kettle_target(&kettle_target);
+		host_comm_service_send_ack(cmd->frame_id, cmd->command_id, true, 0U);
+		return;
+
+	case HOST_CMD_SET_KETTLE_TARGET:
+		if (!app_parse_kettle_target_override(cmd->data, cmd->data_len, &kettle_target) ||
+		    (heat_control_set_kettle_target_override(&kettle_target) != 0)) {
+			error = 13U;
+			break;
+		}
+
+		heat_control_get_kettle_target_override(&kettle_target);
+		host_comm_service_send_kettle_target(&kettle_target);
 		host_comm_service_send_ack(cmd->frame_id, cmd->command_id, true, 0U);
 		return;
 
@@ -609,6 +687,14 @@ static void app_run_control_phase(void)
 
 	last_tick_ms = now_ms;
 	app_context_get_status(&status);
+
+	if ((status.fault != FAULT_NONE) || (status.state == TREATMENT_STATE_FAULT)) {
+		app_maintenance_stop_outputs();
+		heat_control_get_diag(&heat_diag);
+		app_context_set_heat_diag(&heat_diag);
+		return;
+	}
+
 	if (status.maintenance.active) {
 		app_maintenance_apply_outputs();
 		heat_control_get_diag(&heat_diag);

@@ -13,6 +13,8 @@ int host_comm_service_send_ack(uint16_t frame_id, uint8_t cmd_id, bool ok, uint8
 int host_comm_service_send_status(const telemetry_status_t *status);
 int host_comm_service_send_config(const treatment_config_t *config);
 int host_comm_service_send_pid(const pid_params_t *pid);
+int host_comm_service_send_outlet_control(const outlet_control_params_t *params);
+int host_comm_service_send_kettle_target(const kettle_target_override_t *override);
 int host_comm_service_send_runtime(const telemetry_status_t *status);
 int host_comm_service_send_maintenance(const maintenance_control_t *maintenance);
 int host_comm_service_send_raw(const uint8_t *data, size_t len);

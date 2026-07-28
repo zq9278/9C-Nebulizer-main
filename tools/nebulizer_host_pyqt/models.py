@@ -43,12 +43,32 @@ class PidModel:
 
 
 @dataclass
+class OutletControlModel:
+    base_offset_deci_c: int = 140
+    target_margin_deci_c: int = 30
+    air_low_offset_deci_c: int = 10
+    air_mid_offset_deci_c: int = 25
+    air_high_offset_deci_c: int = 40
+    mist_low_offset_deci_c: int = 10
+    mist_mid_offset_deci_c: int = 20
+    mist_high_offset_deci_c: int = 30
+
+
+@dataclass
+class KettleTargetModel:
+    enabled: bool = False
+    target_deci_c: int = 580
+
+
+@dataclass
 class RuntimeModel:
     state: int = 0
     remaining_sec: int = 0
     fault_code: int = 0
     heartbeat_ok: bool = False
     ntc_deci_c: list[int] = field(default_factory=lambda: [0, 0, 0, 0])
+    ntc_raw: list[int] = field(default_factory=lambda: [0, 0, 0, 0])
+    ntc_raw_max: int = 0
     liquid_present: bool = False
     cover_closed: bool = False
     gx1832_active: bool = False
@@ -75,6 +95,9 @@ class RuntimeModel:
     pid_kd_milli: int = 0
     pid_integral_limit_permille: int = 0
     pid_i_term_raw: int = 0
+    kettle_pid_temp_deci_c: int = 0
+    kettle_pid_target_deci_c: int = 0
+    kettle_pid_error_deci_c: int = 0
 
 
 @dataclass

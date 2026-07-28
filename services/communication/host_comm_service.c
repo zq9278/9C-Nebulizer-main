@@ -10,16 +10,89 @@
 #include <protocols/host/host_protocol.h>
 #include <protocols/common/ring_frame_parser.h>
 #include <services/communication/host_comm_tx.h>
+#include <services/heat/heat_control.h>
 #include <src/app/app_context.h>
 #include <src/app/app_events.h>
+#include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 
 LOG_MODULE_REGISTER(host_comm_service, CONFIG_NEBULIZER_LOG_LEVEL);
+
+#define HOST_ERR_BUSY 0x7EU
 
 static struct uart_port host_uart_port;
 static struct ring_frame_parser host_parser;
 static uint8_t host_rx_storage[APP_HOST_RX_RING_SIZE];
 static uint16_t status_frame_id = 0x8000U;
+static uint32_t event_queue_full_last_log_ms;
+
+static bool host_comm_service_handle_readonly_cmd(const host_cmd_event_t *cmd)
+{
+	telemetry_status_t status;
+	pid_params_t pid;
+	outlet_control_params_t outlet;
+	kettle_target_override_t kettle_target;
+
+	if (cmd == NULL) {
+		return false;
+	}
+
+	app_context_get_status(&status);
+
+	switch (cmd->command_id) {
+	case HOST_CMD_GET_STATUS:
+		(void)host_comm_service_send_status(&status);
+		(void)host_comm_service_send_ack(cmd->frame_id, cmd->command_id, true, 0U);
+		return true;
+
+	case HOST_CMD_GET_CONFIG:
+		(void)host_comm_service_send_config(&status.config);
+		(void)host_comm_service_send_ack(cmd->frame_id, cmd->command_id, true, 0U);
+		return true;
+
+	case HOST_CMD_GET_RUNTIME:
+		(void)host_comm_service_send_runtime(&status);
+		(void)host_comm_service_send_ack(cmd->frame_id, cmd->command_id, true, 0U);
+		return true;
+
+	case HOST_CMD_GET_MAINTENANCE:
+		(void)host_comm_service_send_maintenance(&status.maintenance);
+		(void)host_comm_service_send_ack(cmd->frame_id, cmd->command_id, true, 0U);
+		return true;
+
+	case HOST_CMD_GET_PID:
+	case HOST_CMD_GET_KETTLE_PID:
+		heat_control_get_pid(&pid);
+		(void)host_comm_service_send_pid(&pid);
+		(void)host_comm_service_send_ack(cmd->frame_id, cmd->command_id, true, 0U);
+		return true;
+
+	case HOST_CMD_GET_OUTLET_CONTROL:
+		heat_control_get_outlet_params(&outlet);
+		(void)host_comm_service_send_outlet_control(&outlet);
+		(void)host_comm_service_send_ack(cmd->frame_id, cmd->command_id, true, 0U);
+		return true;
+
+	case HOST_CMD_GET_KETTLE_TARGET:
+		heat_control_get_kettle_target_override(&kettle_target);
+		(void)host_comm_service_send_kettle_target(&kettle_target);
+		(void)host_comm_service_send_ack(cmd->frame_id, cmd->command_id, true, 0U);
+		return true;
+
+	default:
+		return false;
+	}
+}
+
+static void host_comm_service_log_event_queue_full(void)
+{
+	uint32_t now_ms = k_uptime_get_32();
+
+	if ((now_ms - event_queue_full_last_log_ms) >= 1000U) {
+		event_queue_full_last_log_ms = now_ms;
+		LOG_WRN("app event queue full");
+	}
+}
 
 static void host_comm_service_parser_cb(const struct frame_codec_frame *frame, void *user_data)
 {
@@ -38,8 +111,16 @@ static void host_comm_service_parser_cb(const struct frame_codec_frame *frame, v
 		return;
 	}
 
+	if (host_comm_service_handle_readonly_cmd(&evt.data.host_cmd)) {
+		return;
+	}
+
 	if (app_event_submit(&evt) != 0) {
-		LOG_WRN("app event queue full");
+		host_comm_service_log_event_queue_full();
+		(void)host_comm_service_send_ack(evt.data.host_cmd.frame_id,
+						 evt.data.host_cmd.command_id,
+						 false,
+						 HOST_ERR_BUSY);
 	}
 }
 
@@ -125,6 +206,36 @@ int host_comm_service_send_pid(const pid_params_t *pid)
 	int ret;
 
 	ret = host_protocol_encode_pid(status_frame_id++, pid, frame, sizeof(frame), &frame_len);
+	if (ret != 0) {
+		return ret;
+	}
+
+	return host_comm_tx_enqueue(frame, frame_len);
+}
+
+int host_comm_service_send_outlet_control(const outlet_control_params_t *params)
+{
+	uint8_t frame[FRAME_CODEC_MAX_FRAME];
+	size_t frame_len;
+	int ret;
+
+	ret = host_protocol_encode_outlet_control(status_frame_id++, params, frame, sizeof(frame),
+						  &frame_len);
+	if (ret != 0) {
+		return ret;
+	}
+
+	return host_comm_tx_enqueue(frame, frame_len);
+}
+
+int host_comm_service_send_kettle_target(const kettle_target_override_t *override)
+{
+	uint8_t frame[FRAME_CODEC_MAX_FRAME];
+	size_t frame_len;
+	int ret;
+
+	ret = host_protocol_encode_kettle_target(status_frame_id++, override, frame,
+						 sizeof(frame), &frame_len);
 	if (ret != 0) {
 		return ret;
 	}

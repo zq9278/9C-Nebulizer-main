@@ -45,6 +45,8 @@ typedef enum {
 typedef struct {
 	uint32_t sequence;
 	int16_t ntc_deci_c[4];
+	uint16_t ntc_raw[4];
+	uint16_t ntc_raw_max;
 	bool ntc_open[4];
 	bool ntc_short[4];
 	bool liquid_present;
@@ -70,6 +72,22 @@ typedef struct {
 } pid_params_t;
 
 typedef struct {
+	int16_t base_offset_deci_c;
+	int16_t target_margin_deci_c;
+	int16_t air_low_offset_deci_c;
+	int16_t air_mid_offset_deci_c;
+	int16_t air_high_offset_deci_c;
+	int16_t mist_low_offset_deci_c;
+	int16_t mist_mid_offset_deci_c;
+	int16_t mist_high_offset_deci_c;
+} outlet_control_params_t;
+
+typedef struct {
+	bool enabled;
+	int16_t target_deci_c;
+} kettle_target_override_t;
+
+typedef struct {
 	bool active;
 	air_level_t fan_level;
 	mist_level_t mist_level;
@@ -82,6 +100,9 @@ typedef struct {
 	int16_t measured_temp_deci_c;
 	int16_t target_temp_deci_c;
 	int16_t error_deci_c;
+	int16_t kettle_temp_deci_c;
+	int16_t kettle_target_deci_c;
+	int16_t kettle_error_deci_c;
 	int32_t p_term_raw;
 	int32_t i_term_raw;
 	int32_t d_term_raw;

@@ -29,7 +29,15 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from models import ConfigModel, MaintenanceModel, PidModel, RuntimeModel, StatusModel
+from models import (
+    ConfigModel,
+    KettleTargetModel,
+    MaintenanceModel,
+    OutletControlModel,
+    PidModel,
+    RuntimeModel,
+    StatusModel,
+)
 from serial_client import SerialClient
 from trend_widget import TrendWidget
 
@@ -42,6 +50,7 @@ class MainWindow(QMainWindow):
         self.last_status: StatusModel | None = None
         self.config_dirty = False
         self.pid_dirty = False
+        self.outlet_dirty = False
         self._suppress_dirty_tracking = False
         self._config_skip_logged = False
         self._pid_skip_logged = False
@@ -49,6 +58,7 @@ class MainWindow(QMainWindow):
         self._bind_signals()
         self.refresh_ports()
         self._update_mode_dependent_controls()
+        self._update_debug_channel()
 
     def _build_ui(self) -> None:
         central = QWidget()
@@ -111,7 +121,66 @@ class MainWindow(QMainWindow):
         config_form.addRow(read_config_button, apply_config_button)
         config_form.addRow(button_grid)
 
-        pid_group = QGroupBox("Heat PID")
+        debug_group = QGroupBox("Temperature Debug Channel")
+        debug_form = QFormLayout(debug_group)
+        self.debug_channel_box = QComboBox()
+        self.debug_channel_box.addItem("Outlet Temp Loop", "outlet")
+        self.debug_channel_box.addItem("Kettle PID Loop", "kettle")
+        debug_form.addRow("Channel", self.debug_channel_box)
+
+        outlet_group = QGroupBox("Outlet Temp Loop Debug")
+        outlet_form = QFormLayout(outlet_group)
+        self.outlet_base_box = QSpinBox()
+        self.outlet_margin_box = QSpinBox()
+        self.outlet_air_low_box = QSpinBox()
+        self.outlet_air_mid_box = QSpinBox()
+        self.outlet_air_high_box = QSpinBox()
+        self.outlet_mist_low_box = QSpinBox()
+        self.outlet_mist_mid_box = QSpinBox()
+        self.outlet_mist_high_box = QSpinBox()
+        for box in (
+            self.outlet_base_box,
+            self.outlet_margin_box,
+            self.outlet_air_low_box,
+            self.outlet_air_mid_box,
+            self.outlet_air_high_box,
+            self.outlet_mist_low_box,
+            self.outlet_mist_mid_box,
+            self.outlet_mist_high_box,
+        ):
+            box.setRange(0, 200)
+            box.setSuffix(" /10C")
+        self.outlet_margin_box.setRange(0, 100)
+        for box in (
+            self.outlet_air_low_box,
+            self.outlet_air_mid_box,
+            self.outlet_air_high_box,
+            self.outlet_mist_low_box,
+            self.outlet_mist_mid_box,
+            self.outlet_mist_high_box,
+        ):
+            box.setRange(0, 100)
+        self.outlet_base_box.setValue(140)
+        self.outlet_margin_box.setValue(30)
+        self.outlet_air_low_box.setValue(10)
+        self.outlet_air_mid_box.setValue(25)
+        self.outlet_air_high_box.setValue(40)
+        self.outlet_mist_low_box.setValue(10)
+        self.outlet_mist_mid_box.setValue(20)
+        self.outlet_mist_high_box.setValue(30)
+        read_outlet_button = QPushButton("Read Outlet Loop")
+        apply_outlet_button = QPushButton("Apply Outlet Loop")
+        outlet_form.addRow("Base Offset", self.outlet_base_box)
+        outlet_form.addRow("Safety Margin", self.outlet_margin_box)
+        outlet_form.addRow("Air Low FF", self.outlet_air_low_box)
+        outlet_form.addRow("Air Mid FF", self.outlet_air_mid_box)
+        outlet_form.addRow("Air High FF", self.outlet_air_high_box)
+        outlet_form.addRow("Mist Low FF", self.outlet_mist_low_box)
+        outlet_form.addRow("Mist Mid FF", self.outlet_mist_mid_box)
+        outlet_form.addRow("Mist High FF", self.outlet_mist_high_box)
+        outlet_form.addRow(read_outlet_button, apply_outlet_button)
+
+        pid_group = QGroupBox("Kettle PID Debug")
         pid_form = QFormLayout(pid_group)
         self.kp_box = QDoubleSpinBox()
         self.ki_box = QDoubleSpinBox()
@@ -142,13 +211,29 @@ class MainWindow(QMainWindow):
         self.ki_slider.setValue(12)
         self.kd_slider.setValue(0)
         self.i_limit_slider.setValue(450)
-        read_pid_button = QPushButton("Read PID")
-        apply_pid_button = QPushButton("Apply PID")
+        self.kettle_pid_temp_label = QLabel("-")
+        self.kettle_pid_target_label = QLabel("-")
+        self.kettle_pid_error_label = QLabel("-")
+        self.kettle_target_override_box = QCheckBox("Enable manual kettle target")
+        self.kettle_target_box = QSpinBox()
+        self.kettle_target_box.setRange(-32768, 32767)
+        self.kettle_target_box.setSuffix(" /10C")
+        self.kettle_target_box.setValue(580)
+        read_pid_button = QPushButton("Read Kettle PID")
+        apply_pid_button = QPushButton("Apply Kettle PID")
+        read_kettle_target_button = QPushButton("Read Kettle Target")
+        apply_kettle_target_button = QPushButton("Apply Kettle Target")
         pid_form.addRow("Kp", self._build_pid_row(self.kp_box, self.kp_slider))
         pid_form.addRow("Ki", self._build_pid_row(self.ki_box, self.ki_slider))
         pid_form.addRow("Kd", self._build_pid_row(self.kd_box, self.kd_slider))
         pid_form.addRow("I Limit", self._build_pid_row(self.i_limit_box, self.i_limit_slider))
+        pid_form.addRow("Manual Kettle Target", self.kettle_target_override_box)
+        pid_form.addRow("Kettle Target Set", self.kettle_target_box)
+        pid_form.addRow("Kettle Temp", self.kettle_pid_temp_label)
+        pid_form.addRow("Kettle Target", self.kettle_pid_target_label)
+        pid_form.addRow("Kettle Error", self.kettle_pid_error_label)
         pid_form.addRow(read_pid_button, apply_pid_button)
+        pid_form.addRow(read_kettle_target_button, apply_kettle_target_button)
 
         maintenance_group = QGroupBox("Maintenance Mode")
         maintenance_form = QFormLayout(maintenance_group)
@@ -170,6 +255,8 @@ class MainWindow(QMainWindow):
         maintenance_form.addRow(exit_maint_button)
 
         left_layout.addWidget(config_group)
+        left_layout.addWidget(debug_group)
+        left_layout.addWidget(outlet_group)
         left_layout.addWidget(pid_group)
         left_layout.addWidget(maintenance_group)
         left_layout.addStretch(1)
@@ -183,8 +270,9 @@ class MainWindow(QMainWindow):
         self.remaining_label = QLabel("-")
         self.heartbeat_label = QLabel("-")
         self.outlet_temp_label = QLabel("-")
-        self.control_temp_label = QLabel("-")
+        self.reserved_temp_label = QLabel("-")
         self.overtemp_temp_label = QLabel("-")
+        self.kettle_temp_label = QLabel("-")
         self.fan_label = QLabel("-")
         self.mist_label = QLabel("-")
         self.mist_fault_label = QLabel("-")
@@ -199,8 +287,9 @@ class MainWindow(QMainWindow):
             ("Remaining", self.remaining_label),
             ("Heartbeat", self.heartbeat_label),
             ("PB11 NTC / Outlet Temp", self.outlet_temp_label),
-            ("PB10 NTC / Kettle Control Temp", self.control_temp_label),
-            ("PA5 NTC / Overtemp Protect Temp", self.overtemp_temp_label),
+            ("PB10 NTC / Reserved Temp", self.reserved_temp_label),
+            ("PB12 NTC / Overtemp Protect Temp", self.overtemp_temp_label),
+            ("PA5 NTC / Kettle Temp", self.kettle_temp_label),
             ("Fan RPM", self.fan_label),
             ("Mist", self.mist_label),
             ("Mist Fault Code", self.mist_fault_label),
@@ -223,6 +312,9 @@ class MainWindow(QMainWindow):
         self._trend_output_cb = QCheckBox("Power")
         self._trend_error_cb = QCheckBox("Error")
         self._trend_integral_cb = QCheckBox("Integral")
+        self._zoom_in_button = QPushButton("Zoom +")
+        self._zoom_out_button = QPushButton("Zoom -")
+        self._reset_zoom_button = QPushButton("Reset View")
         for checkbox in (
             self._trend_outlet_cb,
             self._trend_kettle_cb,
@@ -234,6 +326,9 @@ class MainWindow(QMainWindow):
             checkbox.setChecked(True)
             trend_filter_layout.addWidget(checkbox)
         trend_filter_layout.addStretch(1)
+        trend_filter_layout.addWidget(self._zoom_in_button)
+        trend_filter_layout.addWidget(self._zoom_out_button)
+        trend_filter_layout.addWidget(self._reset_zoom_button)
         trend_layout.addLayout(trend_filter_layout)
         trend_layout.addWidget(self.trend_widget)
         tabs.addTab(trend_tab, "Trends")
@@ -269,6 +364,10 @@ class MainWindow(QMainWindow):
         self._export_button = export_button
         self._read_config_button = read_config_button
         self._apply_config_button = apply_config_button
+        self._outlet_group = outlet_group
+        self._pid_group = pid_group
+        self._read_outlet_button = read_outlet_button
+        self._apply_outlet_button = apply_outlet_button
         self._start_button = start_button
         self._pause_button = pause_button
         self._resume_button = resume_button
@@ -276,6 +375,8 @@ class MainWindow(QMainWindow):
         self._clear_fault_button = clear_fault_button
         self._read_pid_button = read_pid_button
         self._apply_pid_button = apply_pid_button
+        self._read_kettle_target_button = read_kettle_target_button
+        self._apply_kettle_target_button = apply_kettle_target_button
         self._enter_maint_button = enter_maint_button
         self._exit_maint_button = exit_maint_button
         self._apply_manual_button = apply_manual_button
@@ -288,8 +389,12 @@ class MainWindow(QMainWindow):
         self._export_button.clicked.connect(self.export_params)
         self._read_config_button.clicked.connect(self.client.request_config)
         self._apply_config_button.clicked.connect(self.apply_config)
-        self._read_pid_button.clicked.connect(self.client.request_pid)
+        self._read_outlet_button.clicked.connect(self.client.request_outlet_control)
+        self._apply_outlet_button.clicked.connect(self.apply_outlet_control)
+        self._read_pid_button.clicked.connect(self.client.request_kettle_pid)
         self._apply_pid_button.clicked.connect(self.apply_pid)
+        self._read_kettle_target_button.clicked.connect(self.client.request_kettle_target)
+        self._apply_kettle_target_button.clicked.connect(self.apply_kettle_target)
         self._enter_maint_button.clicked.connect(self.client.enter_maintenance)
         self._exit_maint_button.clicked.connect(self.client.exit_maintenance)
         self._apply_manual_button.clicked.connect(self.apply_manual_outputs)
@@ -316,18 +421,24 @@ class MainWindow(QMainWindow):
         self._trend_integral_cb.toggled.connect(
             lambda checked: self.trend_widget.set_series_visible("integral", checked)
         )
+        self._zoom_in_button.clicked.connect(self.trend_widget.zoom_in)
+        self._zoom_out_button.clicked.connect(self.trend_widget.zoom_out)
+        self._reset_zoom_button.clicked.connect(self.trend_widget.reset_view)
 
         self.client.connection_changed.connect(self.update_connection_state)
         self.client.log_message.connect(self.append_log)
         self.client.ack_received.connect(self.handle_ack)
         self.client.status_updated.connect(self.update_status)
         self.client.config_updated.connect(self.update_config)
+        self.client.outlet_control_updated.connect(self.update_outlet_control)
+        self.client.kettle_target_updated.connect(self.update_kettle_target)
         self.client.pid_updated.connect(self.update_pid)
         self.client.runtime_updated.connect(self.update_runtime)
         self.client.maintenance_updated.connect(self.update_maintenance)
 
         self.mode_box.currentIndexChanged.connect(self._mark_config_dirty)
         self.mode_box.currentIndexChanged.connect(self._update_mode_dependent_controls)
+        self.debug_channel_box.currentIndexChanged.connect(self._update_debug_channel)
         self.target_temp_box.valueChanged.connect(self._mark_config_dirty)
         self.duration_box.valueChanged.connect(self._mark_config_dirty)
         self.air_level_box.currentIndexChanged.connect(self._mark_config_dirty)
@@ -336,6 +447,17 @@ class MainWindow(QMainWindow):
         self.ki_box.valueChanged.connect(self._mark_pid_dirty)
         self.kd_box.valueChanged.connect(self._mark_pid_dirty)
         self.i_limit_box.valueChanged.connect(self._mark_pid_dirty)
+        for box in (
+            self.outlet_base_box,
+            self.outlet_margin_box,
+            self.outlet_air_low_box,
+            self.outlet_air_mid_box,
+            self.outlet_air_high_box,
+            self.outlet_mist_low_box,
+            self.outlet_mist_mid_box,
+            self.outlet_mist_high_box,
+        ):
+            box.valueChanged.connect(self._mark_outlet_dirty)
         self.kp_box.valueChanged.connect(lambda value: self._sync_float_slider(self.kp_slider, value, 100.0))
         self.ki_box.valueChanged.connect(lambda value: self._sync_float_slider(self.ki_slider, value, 100.0))
         self.kd_box.valueChanged.connect(lambda value: self._sync_float_slider(self.kd_slider, value, 100.0))
@@ -401,7 +523,9 @@ class MainWindow(QMainWindow):
 
     def request_all(self) -> None:
         self.client.request_config()
-        self.client.request_pid()
+        self.client.request_outlet_control()
+        self.client.request_kettle_pid()
+        self.client.request_kettle_target()
         self.client.request_status()
         self.client.request_runtime()
         self.client.request_maintenance()
@@ -436,11 +560,23 @@ class MainWindow(QMainWindow):
         self.ki_slider.setEnabled(hot_mode)
         self.kd_slider.setEnabled(hot_mode)
         self.i_limit_slider.setEnabled(hot_mode)
+        self.kettle_target_override_box.setEnabled(hot_mode)
+        self.kettle_target_box.setEnabled(hot_mode)
         self._read_pid_button.setEnabled(hot_mode)
         self._apply_pid_button.setEnabled(hot_mode)
+        self._read_kettle_target_button.setEnabled(hot_mode)
+        self._apply_kettle_target_button.setEnabled(hot_mode)
+        self._read_outlet_button.setEnabled(hot_mode)
+        self._apply_outlet_button.setEnabled(hot_mode)
+
+    def _update_debug_channel(self) -> None:
+        channel = self.debug_channel_box.currentData()
+        self._outlet_group.setVisible(channel == "outlet")
+        self._pid_group.setVisible(channel == "kettle")
+        self.trend_widget.set_channel(channel)
 
     def apply_pid(self) -> None:
-        self.client.apply_pid(
+        self.client.apply_kettle_pid(
             int(self.kp_box.value() * 1000.0),
             int(self.ki_box.value() * 1000.0),
             int(self.kd_box.value() * 1000.0),
@@ -448,6 +584,25 @@ class MainWindow(QMainWindow):
         )
         self.pid_dirty = False
         self._pid_skip_logged = False
+
+    def apply_kettle_target(self) -> None:
+        self.client.apply_kettle_target(
+            self.kettle_target_override_box.isChecked(),
+            self.kettle_target_box.value(),
+        )
+
+    def apply_outlet_control(self) -> None:
+        self.client.apply_outlet_control(
+            self.outlet_base_box.value(),
+            self.outlet_margin_box.value(),
+            self.outlet_air_low_box.value(),
+            self.outlet_air_mid_box.value(),
+            self.outlet_air_high_box.value(),
+            self.outlet_mist_low_box.value(),
+            self.outlet_mist_mid_box.value(),
+            self.outlet_mist_high_box.value(),
+        )
+        self.outlet_dirty = False
 
     def apply_manual_outputs(self) -> None:
         self.client.manual_set_fan(self.manual_fan_box.currentIndex())
@@ -470,6 +625,14 @@ class MainWindow(QMainWindow):
             "ki": self.ki_box.value(),
             "kd": self.kd_box.value(),
             "i_limit_permille": self.i_limit_box.value(),
+            "outlet_base_offset_deci_c": self.outlet_base_box.value(),
+            "outlet_target_margin_deci_c": self.outlet_margin_box.value(),
+            "outlet_air_low_offset_deci_c": self.outlet_air_low_box.value(),
+            "outlet_air_mid_offset_deci_c": self.outlet_air_mid_box.value(),
+            "outlet_air_high_offset_deci_c": self.outlet_air_high_box.value(),
+            "outlet_mist_low_offset_deci_c": self.outlet_mist_low_box.value(),
+            "outlet_mist_mid_offset_deci_c": self.outlet_mist_mid_box.value(),
+            "outlet_mist_high_offset_deci_c": self.outlet_mist_high_box.value(),
         }
         with open(path, "w", encoding="utf-8") as fp:
             json.dump(payload, fp, ensure_ascii=False, indent=2)
@@ -494,8 +657,33 @@ class MainWindow(QMainWindow):
         self.ki_box.setValue(payload.get("ki", self.ki_box.value()))
         self.kd_box.setValue(payload.get("kd", self.kd_box.value()))
         self.i_limit_box.setValue(payload.get("i_limit_permille", self.i_limit_box.value()))
+        self.outlet_base_box.setValue(
+            payload.get("outlet_base_offset_deci_c", self.outlet_base_box.value())
+        )
+        self.outlet_margin_box.setValue(
+            payload.get("outlet_target_margin_deci_c", self.outlet_margin_box.value())
+        )
+        self.outlet_air_low_box.setValue(
+            payload.get("outlet_air_low_offset_deci_c", self.outlet_air_low_box.value())
+        )
+        self.outlet_air_mid_box.setValue(
+            payload.get("outlet_air_mid_offset_deci_c", self.outlet_air_mid_box.value())
+        )
+        self.outlet_air_high_box.setValue(
+            payload.get("outlet_air_high_offset_deci_c", self.outlet_air_high_box.value())
+        )
+        self.outlet_mist_low_box.setValue(
+            payload.get("outlet_mist_low_offset_deci_c", self.outlet_mist_low_box.value())
+        )
+        self.outlet_mist_mid_box.setValue(
+            payload.get("outlet_mist_mid_offset_deci_c", self.outlet_mist_mid_box.value())
+        )
+        self.outlet_mist_high_box.setValue(
+            payload.get("outlet_mist_high_offset_deci_c", self.outlet_mist_high_box.value())
+        )
         self.config_dirty = True
         self.pid_dirty = True
+        self.outlet_dirty = True
         self._config_skip_logged = False
         self._pid_skip_logged = False
         self.append_log(f"parameters imported: {path}")
@@ -569,10 +757,39 @@ class MainWindow(QMainWindow):
         self._pid_skip_logged = False
         self.append_log("pid window updated")
 
+    def update_outlet_control(self, outlet: OutletControlModel) -> None:
+        if self.outlet_dirty:
+            self.append_log("rx outlet control ignored: local outlet loop has unsaved edits")
+            return
+
+        self._suppress_dirty_tracking = True
+        self.outlet_base_box.setValue(outlet.base_offset_deci_c)
+        self.outlet_margin_box.setValue(outlet.target_margin_deci_c)
+        self.outlet_air_low_box.setValue(outlet.air_low_offset_deci_c)
+        self.outlet_air_mid_box.setValue(outlet.air_mid_offset_deci_c)
+        self.outlet_air_high_box.setValue(outlet.air_high_offset_deci_c)
+        self.outlet_mist_low_box.setValue(outlet.mist_low_offset_deci_c)
+        self.outlet_mist_mid_box.setValue(outlet.mist_mid_offset_deci_c)
+        self.outlet_mist_high_box.setValue(outlet.mist_high_offset_deci_c)
+        self._suppress_dirty_tracking = False
+        self.outlet_dirty = False
+        self.append_log("outlet loop window updated")
+
+    def update_kettle_target(self, kettle_target: KettleTargetModel) -> None:
+        self.kettle_target_override_box.setChecked(kettle_target.enabled)
+        self.kettle_target_box.setValue(kettle_target.target_deci_c)
+        self.append_log("kettle target window updated")
+
     def update_runtime(self, runtime: RuntimeModel) -> None:
         self.outlet_temp_label.setText(f"{runtime.ntc_deci_c[0] / 10.0:.1f} C")
-        self.control_temp_label.setText(f"{runtime.ntc_deci_c[1] / 10.0:.1f} C")
-        self.overtemp_temp_label.setText(f"{runtime.ntc_deci_c[3] / 10.0:.1f} C")
+        self.reserved_temp_label.setText(f"{runtime.ntc_deci_c[1] / 10.0:.1f} C")
+        self.overtemp_temp_label.setText(f"{runtime.ntc_deci_c[2] / 10.0:.1f} C")
+        if runtime.ntc_raw_max > 0:
+            self.kettle_temp_label.setText(
+                f"{runtime.ntc_deci_c[3] / 10.0:.1f} C  raw={runtime.ntc_raw[3]}/{runtime.ntc_raw_max}"
+            )
+        else:
+            self.kettle_temp_label.setText(f"{runtime.ntc_deci_c[3] / 10.0:.1f} C")
         self.fan_label.setText(str(runtime.fan_rpm))
         self.mist_fault_label.setText(
             f"{runtime.mist_fault_code} LOW_WATER" if runtime.mist_low_water else str(runtime.mist_fault_code)
@@ -582,17 +799,22 @@ class MainWindow(QMainWindow):
         self.heat_label.setText(
             f"{'on' if runtime.heat_enabled else 'off'}, burst, {runtime.heat_output_permille} permille"
         )
+        self.kettle_pid_temp_label.setText(f"{runtime.kettle_pid_temp_deci_c / 10.0:.1f} C")
+        self.kettle_pid_target_label.setText(f"{runtime.kettle_pid_target_deci_c / 10.0:.1f} C")
+        self.kettle_pid_error_label.setText(f"{runtime.kettle_pid_error_deci_c / 10.0:.1f} C")
         self.maintenance_label.setText(
             f"{'on' if runtime.maintenance_active else 'off'} fan={self.level_to_string(runtime.maintenance_fan_level)} "
             f"mist={self.level_to_string(runtime.maintenance_mist_level)} heat={runtime.maintenance_heat_permille}"
         )
         self.trend_widget.add_sample(
             runtime.ntc_deci_c[0] / 10.0,
-            runtime.ntc_deci_c[1] / 10.0,
+            runtime.ntc_deci_c[3] / 10.0,
             runtime.target_temp_deci_c / 10.0,
             runtime.heat_output_permille / 10.0,
             runtime.heat_error_deci_c / 10.0,
             runtime.pid_i_term_raw / 10000.0,
+            runtime.kettle_pid_target_deci_c / 10.0,
+            runtime.kettle_pid_error_deci_c / 10.0,
         )
         self.trend_widget.set_pid_summary(
             runtime.pid_kp_milli / 1000.0,
@@ -614,6 +836,7 @@ class MainWindow(QMainWindow):
             self.trend_widget.clear_samples()
             self.config_dirty = False
             self.pid_dirty = False
+            self.outlet_dirty = False
             self._config_skip_logged = False
             self._pid_skip_logged = False
 
@@ -627,9 +850,31 @@ class MainWindow(QMainWindow):
             self.pid_dirty = True
             self._pid_skip_logged = False
 
+    def _mark_outlet_dirty(self) -> None:
+        if not self._suppress_dirty_tracking:
+            self.outlet_dirty = True
+
     def handle_ack(self, command_id: int, ok: bool, error_code: int) -> None:
         command_name = self.command_to_string(command_id)
         if ok:
+            if command_id == 0x34:  # SET_OUTLET_CONTROL
+                self.append_log(f"{command_name} applied")
+                self.client.request_outlet_control()
+                self.client.request_runtime()
+                return
+
+            if command_id in {0x29, 0x32}:  # SET_PID / SET_KETTLE_PID
+                self.append_log(f"{command_name} applied")
+                self.client.request_kettle_pid()
+                self.client.request_runtime()
+                return
+
+            if command_id == 0x36:  # SET_KETTLE_TARGET
+                self.append_log(f"{command_name} applied")
+                self.client.request_kettle_target()
+                self.client.request_runtime()
+                return
+
             if command_id in {
                 0x2B,  # ENTER_MAINTENANCE
                 0x2C,  # EXIT_MAINTENANCE
@@ -737,6 +982,12 @@ class MainWindow(QMainWindow):
             0x2E: "MANUAL_SET_MIST",
             0x2F: "MANUAL_SET_HEAT",
             0x30: "GET_MAINTENANCE",
+            0x31: "GET_KETTLE_PID",
+            0x32: "SET_KETTLE_PID",
+            0x33: "GET_OUTLET_CONTROL",
+            0x34: "SET_OUTLET_CONTROL",
+            0x35: "GET_KETTLE_TARGET",
+            0x36: "SET_KETTLE_TARGET",
         }
         return names.get(command_id, f"CMD_0x{command_id:02X}")
 
@@ -753,6 +1004,8 @@ class MainWindow(QMainWindow):
             9: "manual mist command invalid or maintenance mode is inactive",
             10: "manual heat command invalid or maintenance mode is inactive",
             11: "resume blocked while maintenance mode is active",
+            12: "outlet loop payload invalid or parameter out of range",
+            13: "kettle target payload invalid",
             0x40: "state machine rejected this command in the current state",
             0x42: "cover is open, start is blocked",
             0x43: "mist board reports low water, start is blocked",
