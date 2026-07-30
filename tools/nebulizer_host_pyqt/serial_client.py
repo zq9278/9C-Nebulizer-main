@@ -10,10 +10,10 @@ from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 
 from models import (
     ConfigModel,
-    KettleTargetModel,
+    FanPidModel,
     MaintenanceModel,
-    OutletControlModel,
     PidModel,
+    PreheatPidModel,
     RuntimeModel,
     StatusModel,
 )
@@ -48,8 +48,8 @@ class SerialClient(QObject):
     status_updated = pyqtSignal(object)
     config_updated = pyqtSignal(object)
     pid_updated = pyqtSignal(object)
-    outlet_control_updated = pyqtSignal(object)
-    kettle_target_updated = pyqtSignal(object)
+    preheat_pid_updated = pyqtSignal(object)
+    fan_pid_updated = pyqtSignal(object)
     runtime_updated = pyqtSignal(object)
     maintenance_updated = pyqtSignal(object)
 
@@ -113,9 +113,9 @@ class SerialClient(QObject):
         self.log_message.emit(f"connected {device} @ {baudrate}")
 
         self.request_config()
-        self.request_outlet_control()
-        self.request_kettle_pid()
-        self.request_kettle_target()
+        self.request_preheat_pid()
+        self.request_pid()
+        self.request_fan_pid()
         self.request_status()
         self.request_runtime()
         self.request_maintenance()
@@ -246,41 +246,45 @@ class SerialClient(QObject):
             )
             return
 
-        if frame.frame_type == HostFrameType.OUTLET_CTRL and len(payload) >= 16:
-            outlet = OutletControlModel(
-                base_offset_deci_c=_sle16(payload, 0),
-                target_margin_deci_c=_sle16(payload, 2),
-                air_low_offset_deci_c=_sle16(payload, 4),
-                air_mid_offset_deci_c=_sle16(payload, 6),
-                air_high_offset_deci_c=_sle16(payload, 8),
-                mist_low_offset_deci_c=_sle16(payload, 10),
-                mist_mid_offset_deci_c=_sle16(payload, 12),
-                mist_high_offset_deci_c=_sle16(payload, 14),
+        if frame.frame_type == HostFrameType.PREHEAT_PID and len(payload) >= 20:
+            pid = PreheatPidModel(
+                kp_milli=_sle32(payload, 0),
+                ki_milli=_sle32(payload, 4),
+                kd_milli=_sle32(payload, 8),
+                integral_limit_permille=_sle32(payload, 12),
+                target_temp_deci_c=_le16(payload, 16),
+                output_max_permille=_le16(payload, 18),
             )
-            self.outlet_control_updated.emit(outlet)
+            self.preheat_pid_updated.emit(pid)
             self.log_message.emit(
-                "rx outlet control "
-                f"base={outlet.base_offset_deci_c / 10.0:.1f}C "
-                f"margin={outlet.target_margin_deci_c / 10.0:.1f}C "
-                f"air={outlet.air_low_offset_deci_c}/"
-                f"{outlet.air_mid_offset_deci_c}/"
-                f"{outlet.air_high_offset_deci_c} "
-                f"mist={outlet.mist_low_offset_deci_c}/"
-                f"{outlet.mist_mid_offset_deci_c}/"
-                f"{outlet.mist_high_offset_deci_c}"
+                "rx preheat pid "
+                f"kp={pid.kp_milli / 1000.0:.3f} "
+                f"ki={pid.ki_milli / 1000.0:.3f} "
+                f"kd={pid.kd_milli / 1000.0:.3f} "
+                f"ilim={pid.integral_limit_permille} "
+                f"target={pid.target_temp_deci_c / 10.0:.1f}C "
+                f"max={pid.output_max_permille}"
             )
             return
 
-        if frame.frame_type == HostFrameType.KETTLE_TARGET and len(payload) >= 3:
-            kettle_target = KettleTargetModel(
-                enabled=bool(payload[0]),
-                target_deci_c=_sle16(payload, 1),
+        if frame.frame_type == HostFrameType.FAN_PID and len(payload) >= 20:
+            pid = FanPidModel(
+                kp_milli=_sle32(payload, 0),
+                ki_milli=_sle32(payload, 4),
+                kd_milli=_sle32(payload, 8),
+                integral_limit_permille=_sle32(payload, 12),
+                max_boost_percent=payload[16],
+                low_base_percent=payload[17],
+                mid_base_percent=payload[18],
+                high_base_percent=payload[19],
             )
-            self.kettle_target_updated.emit(kettle_target)
+            self.fan_pid_updated.emit(pid)
             self.log_message.emit(
-                "rx kettle target "
-                f"enabled={int(kettle_target.enabled)} "
-                f"target={kettle_target.target_deci_c / 10.0:.1f}C"
+                "rx fan pid "
+                f"kp={pid.kp_milli / 1000.0:.3f} "
+                f"ki={pid.ki_milli / 1000.0:.3f} "
+                f"kd={pid.kd_milli / 1000.0:.3f} "
+                f"ilim={pid.integral_limit_permille} boost={pid.max_boost_percent}%"
             )
             return
 
@@ -325,18 +329,26 @@ class SerialClient(QObject):
                 runtime.pid_integral_limit_permille = _sle32(payload, 58)
             if len(payload) >= 66:
                 runtime.pid_i_term_raw = _sle32(payload, 62)
-            if len(payload) >= 72:
-                runtime.kettle_pid_temp_deci_c = _sle16(payload, 66)
-                runtime.kettle_pid_target_deci_c = _sle16(payload, 68)
-                runtime.kettle_pid_error_deci_c = _sle16(payload, 70)
-            if len(payload) >= 82:
+            if len(payload) >= 76:
                 runtime.ntc_raw = [
+                    _le16(payload, 66),
+                    _le16(payload, 68),
+                    _le16(payload, 70),
                     _le16(payload, 72),
-                    _le16(payload, 74),
-                    _le16(payload, 76),
-                    _le16(payload, 78),
                 ]
-                runtime.ntc_raw_max = _le16(payload, 80)
+                runtime.ntc_raw_max = _le16(payload, 74)
+            if len(payload) >= 90:
+                runtime.fan_pid_enabled = bool(payload[76])
+                runtime.fan_pid_saturated = bool(payload[77])
+                runtime.fan_pid_base_percent = payload[78]
+                runtime.fan_pid_output_percent = payload[79]
+                runtime.fan_pid_boost_permille = _le16(payload, 80)
+                runtime.fan_pid_error_deci_c = _sle16(payload, 82)
+                runtime.fan_pid_measured_temp_deci_c = _sle16(payload, 84)
+                runtime.fan_pid_target_temp_deci_c = _sle16(payload, 86)
+                runtime.fan_pid_i_term_permille = _sle16(payload, 88)
+            if len(payload) >= 91:
+                runtime.heat_control_phase = payload[90]
             self.runtime_updated.emit(runtime)
             self.log_message.emit(
                 "rx runtime "
@@ -347,10 +359,13 @@ class SerialClient(QObject):
                 f"ki={runtime.pid_ki_milli / 1000.0:.3f} "
                 f"kd={runtime.pid_kd_milli / 1000.0:.3f} "
                 f"i_term={runtime.pid_i_term_raw / 1000.0:.1f} "
-                f"kettle_pid={runtime.kettle_pid_temp_deci_c / 10.0:.1f}/"
-                f"{runtime.kettle_pid_target_deci_c / 10.0:.1f}C "
-                f"err={runtime.kettle_pid_error_deci_c / 10.0:.1f}C "
+                f"outlet_pid={runtime.measured_temp_deci_c / 10.0:.1f}/"
+                f"{runtime.target_temp_deci_c / 10.0:.1f}C "
+                f"err={runtime.heat_error_deci_c / 10.0:.1f}C "
                 f"kettle_raw={runtime.ntc_raw[3]}/{runtime.ntc_raw_max}"
+                f" fan_pid={runtime.fan_pid_base_percent}+"
+                f"{runtime.fan_pid_boost_permille / 10.0:.1f}%="
+                f"{runtime.fan_pid_output_percent}%"
             )
             return
 
@@ -382,14 +397,11 @@ class SerialClient(QObject):
     def request_pid(self) -> None:
         self._send(HostCmd.GET_PID)
 
-    def request_kettle_pid(self) -> None:
-        self._send(HostCmd.GET_KETTLE_PID)
+    def request_preheat_pid(self) -> None:
+        self._send(HostCmd.GET_PREHEAT_PID)
 
-    def request_outlet_control(self) -> None:
-        self._send(HostCmd.GET_OUTLET_CONTROL)
-
-    def request_kettle_target(self) -> None:
-        self._send(HostCmd.GET_KETTLE_TARGET)
+    def request_fan_pid(self) -> None:
+        self._send(HostCmd.GET_FAN_PID)
 
     def request_runtime(self) -> None:
         self._send(HostCmd.GET_RUNTIME)
@@ -439,7 +451,7 @@ class SerialClient(QObject):
         )
         self._send(HostCmd.SET_PID, payload)
 
-    def apply_kettle_pid(
+    def apply_preheat_pid(
         self, kp_milli: int, ki_milli: int, kd_milli: int, i_limit_permille: int
     ) -> None:
         payload = (
@@ -448,37 +460,18 @@ class SerialClient(QObject):
             + kd_milli.to_bytes(4, "little", signed=True)
             + i_limit_permille.to_bytes(4, "little", signed=True)
         )
-        self._send(HostCmd.SET_KETTLE_PID, payload)
+        self._send(HostCmd.SET_PREHEAT_PID, payload)
 
-    def apply_outlet_control(
-        self,
-        base_offset_deci_c: int,
-        target_margin_deci_c: int,
-        air_low_offset_deci_c: int,
-        air_mid_offset_deci_c: int,
-        air_high_offset_deci_c: int,
-        mist_low_offset_deci_c: int,
-        mist_mid_offset_deci_c: int,
-        mist_high_offset_deci_c: int,
+    def apply_fan_pid(
+        self, kp_milli: int, ki_milli: int, kd_milli: int, i_limit_permille: int
     ) -> None:
-        values = (
-            base_offset_deci_c,
-            target_margin_deci_c,
-            air_low_offset_deci_c,
-            air_mid_offset_deci_c,
-            air_high_offset_deci_c,
-            mist_low_offset_deci_c,
-            mist_mid_offset_deci_c,
-            mist_high_offset_deci_c,
+        payload = (
+            kp_milli.to_bytes(4, "little", signed=True)
+            + ki_milli.to_bytes(4, "little", signed=True)
+            + kd_milli.to_bytes(4, "little", signed=True)
+            + i_limit_permille.to_bytes(4, "little", signed=True)
         )
-        payload = b"".join(value.to_bytes(2, "little", signed=True) for value in values)
-        self._send(HostCmd.SET_OUTLET_CONTROL, payload)
-
-    def apply_kettle_target(self, enabled: bool, target_deci_c: int) -> None:
-        payload = bytes([1 if enabled else 0]) + target_deci_c.to_bytes(
-            2, "little", signed=True
-        )
-        self._send(HostCmd.SET_KETTLE_TARGET, payload)
+        self._send(HostCmd.SET_FAN_PID, payload)
 
     def enter_maintenance(self) -> None:
         self._send(HostCmd.ENTER_MAINTENANCE)

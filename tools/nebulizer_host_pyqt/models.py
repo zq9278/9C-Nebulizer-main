@@ -34,30 +34,34 @@ class ConfigModel:
 
 @dataclass
 class PidModel:
-    kp_milli: int = 12000
-    ki_milli: int = 120
+    kp_milli: int = 10000
+    ki_milli: int = 1
     kd_milli: int = 0
-    integral_limit_permille: int = 450
+    integral_limit_permille: int = 400
     min_delay_us: int = 0
     max_delay_us: int = 8000
 
 
 @dataclass
-class OutletControlModel:
-    base_offset_deci_c: int = 140
-    target_margin_deci_c: int = 30
-    air_low_offset_deci_c: int = 10
-    air_mid_offset_deci_c: int = 25
-    air_high_offset_deci_c: int = 40
-    mist_low_offset_deci_c: int = 10
-    mist_mid_offset_deci_c: int = 20
-    mist_high_offset_deci_c: int = 30
+class PreheatPidModel:
+    kp_milli: int = 2500
+    ki_milli: int = 0
+    kd_milli: int = 0
+    integral_limit_permille: int = 0
+    target_temp_deci_c: int = 550
+    output_max_permille: int = 800
 
 
 @dataclass
-class KettleTargetModel:
-    enabled: bool = False
-    target_deci_c: int = 580
+class FanPidModel:
+    kp_milli: int = 1000
+    ki_milli: int = 0
+    kd_milli: int = 0
+    integral_limit_permille: int = 50
+    max_boost_percent: int = 10
+    low_base_percent: int = 40
+    mid_base_percent: int = 60
+    high_base_percent: int = 80
 
 
 @dataclass
@@ -95,9 +99,16 @@ class RuntimeModel:
     pid_kd_milli: int = 0
     pid_integral_limit_permille: int = 0
     pid_i_term_raw: int = 0
-    kettle_pid_temp_deci_c: int = 0
-    kettle_pid_target_deci_c: int = 0
-    kettle_pid_error_deci_c: int = 0
+    fan_pid_enabled: bool = False
+    fan_pid_saturated: bool = False
+    fan_pid_base_percent: int = 0
+    fan_pid_output_percent: int = 0
+    fan_pid_boost_permille: int = 0
+    fan_pid_error_deci_c: int = 0
+    fan_pid_measured_temp_deci_c: int = 0
+    fan_pid_target_temp_deci_c: int = 0
+    fan_pid_i_term_permille: int = 0
+    heat_control_phase: int = 0
 
 
 @dataclass

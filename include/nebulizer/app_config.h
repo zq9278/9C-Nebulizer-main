@@ -1,20 +1,27 @@
 #ifndef NEBULIZER_APP_CONFIG_H_
 #define NEBULIZER_APP_CONFIG_H_
-
+/*
+1、连续低温且温度高，要报警
+2、热敷模式下，每次开始治疗时，如果APP_HEAT_PREHEAT_TARGET_DECI_C没有到预热温度（持续给上位机发送一个命令，1代表预热中，0代表预热完成），不开启正式治疗，相当于增加一个预热阶段，到达预热温度以后自动开始治疗，给上位机发送0
 /* 默认治疗目标温度，单位 0.1C；420 表示 42.0C。 */
 #define APP_DEFAULT_TARGET_TEMP_DECI_C          420
 
 /* 允许用户设置的最高治疗目标温度，单位 0.1C；450 表示 45.0C。 */
 #define APP_MAX_TARGET_TEMP_DECI_C              450
 
-/* 锅体临时停热温度，单位 0.1C；达到 65.0C 时停止加热，低于阈值后可自动恢复 PID。 */
-#define APP_KETTLE_HEAT_CUTOFF_DECI_C           1200
-
 /* 出雾口 1 过温故障阈值，单位 0.1C；达到 46.0C 立即进入故障保护。 */
-#define APP_OUTLET1_OVER_TEMP_FAULT_DECI_C      460
+#define APP_OUTLET1_OVER_TEMP_FAULT_DECI_C      480
 
-/* 锅体严重过温故障阈值，单位 0.1C；达到 100.0C 立即进入故障保护。 */
-#define APP_KETTLE_OVER_TEMP_FAULT_DECI_C       1000
+/* 管道积水判定：PA5 达到 98.0C 后，PB11 在连续下降段内累计下降 5.0C 即报错。 */
+#define APP_PIPE_WATER_PA5_MIN_DECI_C            980
+#define APP_PIPE_WATER_PB11_DROP_DECI_C          50
+
+/* PB11 从下降段最低点回升超过 0.2C 时，认为连续下降已中断并重新统计。 */
+#define APP_PIPE_WATER_PB11_RISE_RESET_DECI_C    2
+
+#if (APP_PIPE_WATER_PB11_DROP_DECI_C <= 0)
+#error "pipe water PB11 drop threshold must be positive"
+#endif
 
 /* 默认治疗时长，单位秒；600 表示默认治疗 10 分钟。 */
 #define APP_DEFAULT_TREATMENT_TIME_SEC          600
@@ -23,7 +30,7 @@
 #define APP_MIN_TREATMENT_TIME_SEC              60
 
 /* 允许设置的最长治疗时长，单位秒。 */
-#define APP_MAX_TREATMENT_TIME_SEC              1800
+#define APP_MAX_TREATMENT_TIME_SEC              3600
 
 /* 传感器采样任务周期，单位毫秒。 */
 #define APP_SENSOR_PERIOD_MS                    20
@@ -31,11 +38,14 @@
 /* 控制任务周期，单位毫秒；热控、风扇、雾化输出按这个节拍更新。 */
 #define APP_CONTROL_PERIOD_MS                   20
 
-/* 锅体热 PID 计算周期，单位毫秒；锅体温度变化慢，积分不需要跟随 20ms 控制任务累加。 */
+/* PB11 Outlet PID 计算周期，单位毫秒；出口温度变化慢，积分不跟随 20ms 控制任务累加。 */
 #define APP_HEAT_PID_PERIOD_MS                  2000U
 
+/* PB10 预热 PID 周期；PB10 反馈延迟大，避免随 20ms 控制任务快速积分。 */
+#define APP_HEAT_PREHEAT_PID_PERIOD_MS          5000U
+
 /* 安全检查任务周期，单位毫秒；越小代表保护响应越快。 */
-#define APP_SAFETY_PERIOD_MS                    10
+#define APP_SAFETY_PERIOD_MS                    50
 
 /* 上位机遥测状态上报周期，单位毫秒。 */
 #define APP_TELEMETRY_PERIOD_MS                 500
@@ -101,13 +111,36 @@
 #define FAN_PWM_PERIOD_USEC                     100U
 
 /* 风扇低档占空比，单位百分比。 */
-#define FAN_LEVEL_LOW_PERCENT                   80U
+#define FAN_LEVEL_LOW_PERCENT                   40U
 
 /* 风扇中档占空比，单位百分比。 */
-#define FAN_LEVEL_MID_PERCENT                   90U
+#define FAN_LEVEL_MID_PERCENT                   60U
 
 /* 风扇高档占空比，单位百分比。 */
-#define FAN_LEVEL_HIGH_PERCENT                  100U
+#define FAN_LEVEL_HIGH_PERCENT                  80U
+
+/* PB11 出口温度风扇 PID 周期；风扇只在档位基础值上向上调节。 */
+#define APP_FAN_PID_PERIOD_MS                   1000U
+
+/* 风扇 PID 最多在 LOW/MID/HIGH 基础风速上增加 10 个百分点。 */
+#define APP_FAN_PID_MAX_BOOST_PERCENT           10U
+
+/* 风扇 PID 默认参数；误差为 PB11 温度减去出口目标温度。 */
+#define APP_FAN_PID_KP_DEFAULT_MILLI            20000//风扇pid
+#define APP_FAN_PID_KI_DEFAULT_MILLI            0
+#define APP_FAN_PID_KD_DEFAULT_MILLI            0
+#define APP_FAN_PID_I_LIMIT_DEFAULT_PERMILLE    50
+
+/* 允许上位机写入的风扇 PID 参数范围。 */
+#define APP_FAN_PID_KP_MAX_MILLI                20000
+#define APP_FAN_PID_KI_MAX_MILLI                5000
+#define APP_FAN_PID_KD_MAX_MILLI                5000
+#define APP_FAN_PID_I_LIMIT_MAX_PERMILLE        (APP_FAN_PID_MAX_BOOST_PERCENT * 10U)
+
+#if (FAN_LEVEL_LOW_PERCENT > 100U) || (FAN_LEVEL_MID_PERCENT > 100U) || \
+	(FAN_LEVEL_HIGH_PERCENT > 100U)
+#error "fan base level must be in the range 0..100 percent"
+#endif
 
 /* TRIAC 最小触发延时，单位微秒；越小代表越接近全功率导通。 */
 #define TRIAC_MIN_DELAY_US                      500U
@@ -124,70 +157,59 @@
 /* TRIAC_EN 功率控制窗口包含的时间片数量；12ms * 100 = 1200ms 完整功率窗口。 */
 #define APP_TRIAC_POWER_WINDOW_SLICES           100U
 
-/* 热控内层 PID 默认 Kp，按 milli 放大保存；12000 表示 12.000。 */
-#define APP_HEAT_PID_KP_DEFAULT_MILLI           8000
+/* PB11 Outlet PID 默认 Kp，按 milli 放大保存；20000 表示 20.000。 */
+#define APP_HEAT_PID_KP_DEFAULT_MILLI           20000
 
-/* 热控内层 PID 默认 Ki，按 milli 放大保存；120 表示 0.120。 */
+/* PB11 Outlet PID 默认 Ki，按 milli 放大保存；当前 0 表示先关闭积分。 */
 #define APP_HEAT_PID_KI_DEFAULT_MILLI           0
 
-/* 热控内层 PID 默认 Kd，按 milli 放大保存；0 表示默认不使用微分。 */
+/* PB11 Outlet PID 默认 Kd，按 milli 放大保存；0 表示默认不使用微分。 */
 #define APP_HEAT_PID_KD_DEFAULT_MILLI           0
 
-/* 热控内层 PID 默认积分限幅，单位 permille；450 表示积分项最多贡献 45% 输出。 */
-#define APP_HEAT_PID_I_LIMIT_DEFAULT            40
+/* PB11 Outlet PID 默认积分限幅，单位 permille；400 表示积分项最多贡献 40% 输出。 */
+#define APP_HEAT_PID_I_LIMIT_DEFAULT            400
 
-/* 自动模式下直接使用的锅体目标温度，单位 0.1C；680 表示 68.0C。 */
-#define APP_HEAT_KETTLE_FIXED_TARGET_DECI_C     680
+/* PB10 预热目标温度；500 表示 50.0C。 */
+#define APP_HEAT_PREHEAT_TARGET_DECI_C          500
 
-/* 锅体虚拟目标基础补偿已停用，保留为上位机兼容字段，固定为 0。 */
-#define APP_HEAT_KETTLE_BASE_OFFSET_DECI_C      0
+/* PB11 距离出口目标不超过 2.0C 时，退出 PB10 预热并锁存进入 PB11 PID。 */
+#define APP_HEAT_OUTLET_PID_ENTRY_BAND_DECI_C   50
 
-/* 锅体虚拟目标距离临时停热阈值的安全余量，单位 0.1C。 */
-#define APP_HEAT_KETTLE_TARGET_MARGIN_DECI_C    30
+/* PB10 预热 PID 默认参数；高延迟反馈先从 P 控制开始。 */
+#define APP_HEAT_PREHEAT_PID_KP_DEFAULT_MILLI   2000
+#define APP_HEAT_PREHEAT_PID_KI_DEFAULT_MILLI   0
+#define APP_HEAT_PREHEAT_PID_KD_DEFAULT_MILLI   0
+#define APP_HEAT_PREHEAT_PID_I_LIMIT_DEFAULT    0
 
-/* 锅体内层控制死区，单位 0.1C；误差小于该值时认为锅体目标已满足，可停止加热。 */
-#define APP_HEAT_KETTLE_INNER_DEADBAND_ENABLE   0
-#define APP_HEAT_KETTLE_INNER_DEADBAND_DECI_C   5
+/* PB10 预热 PID 输出上限；800 表示 80%。 */
+#define APP_HEAT_PREHEAT_PID_OUTPUT_MAX_PERMILLE 800U
 
-/* 锅体超过虚拟目标多少后强制停热，单位 0.1C；用于抑制锅体侧过冲。 */
-#define APP_HEAT_KETTLE_OVER_TARGET_STOP_ENABLE 0
-#define APP_HEAT_KETTLE_OVER_TARGET_STOP_DECI_C 10
+/* PB10 距离目标不超过 5.0C 时才允许积分，抑制高延迟造成的积分饱和。 */
+#define APP_HEAT_PREHEAT_PID_I_ENABLE_BAND_DECI_C 50
 
-/* 调试锅体内层 PID 时，允许手动覆盖 kettle 目标温度的最小值，单位 0.1C。 */
-#define APP_HEAT_KETTLE_TARGET_OVERRIDE_MIN_DECI_C 350
+/* 切换到 PB11 PID 后，输出上限在 10 秒内从 0 平滑增加到 A。 */
+#define APP_HEAT_PID_HANDOFF_RAMP_MS            10000U
 
-/* 调试锅体内层 PID 时，允许手动覆盖 kettle 目标温度的最大值，单位 0.1C。 */
-#define APP_HEAT_KETTLE_TARGET_OVERRIDE_MAX_DECI_C 650
+/* PA5 最高温停热阈值；1100 表示 110.0C，达到后只停热、不报故障。 */
+#define APP_HEAT_PA5_STOP_DECI_C                1100
 
-/* 锅体低温全功率预热阈值，单位 0.1C；低于 40.0C 时跳过 PID，直接满功率加热。 */
-#define APP_HEAT_KETTLE_FULL_POWER_BELOW_DECI_C 30
+/* A：PB11 加热 PID 阶段的最终输出上限，单位 permille；默认 200 表示 20%。 */
+#define APP_HEAT_PID_OUTPUT_MAX_PERMILLE        200U
 
-/* 低风量对锅体虚拟目标的前馈补偿，单位 0.1C。 */
-#define APP_HEAT_AIR_LOW_OFFSET_DECI_C          10
+/* B：PB11 加热 PID 阶段的 PA5 停热温度，单位 0.1C；默认 1000 表示 100.0C。 */
+#define APP_HEAT_PID_PA5_STOP_DECI_C            100
 
-/* 中风量对锅体虚拟目标的前馈补偿，单位 0.1C。 */
-#define APP_HEAT_AIR_MID_OFFSET_DECI_C          25
+#if (APP_HEAT_PID_OUTPUT_MAX_PERMILLE > 1000U)
+#error "heat PID output limit must be in the range 0..1000 permille"
+#endif
 
-/* 高风量对锅体虚拟目标的前馈补偿，单位 0.1C。 */
-#define APP_HEAT_AIR_HIGH_OFFSET_DECI_C         40
+#if (APP_HEAT_PREHEAT_PID_OUTPUT_MAX_PERMILLE > 1000U)
+#error "preheat PID output limit must be in the range 0..1000 permille"
+#endif
 
-/* 低雾量对锅体虚拟目标的前馈补偿，单位 0.1C。 */
-#define APP_HEAT_MIST_LOW_OFFSET_DECI_C         10
-
-/* 中雾量对锅体虚拟目标的前馈补偿，单位 0.1C。 */
-#define APP_HEAT_MIST_MID_OFFSET_DECI_C         20
-
-/* 高雾量对锅体虚拟目标的前馈补偿，单位 0.1C。 */
-#define APP_HEAT_MIST_HIGH_OFFSET_DECI_C        30
-
-/* 出雾口外环基础补偿允许的最大值，单位 0.1C。 */
-#define APP_HEAT_KETTLE_BASE_OFFSET_MAX_DECI_C  200
-
-/* 出雾口外环安全余量允许的最大值，单位 0.1C。 */
-#define APP_HEAT_KETTLE_TARGET_MARGIN_MAX_DECI_C 100
-
-/* 风量/雾量前馈补偿允许的最大值，单位 0.1C。 */
-#define APP_HEAT_FEEDFORWARD_OFFSET_MAX_DECI_C  100
+#if (APP_HEAT_PID_PA5_STOP_DECI_C > APP_HEAT_PA5_STOP_DECI_C)
+#error "heat PID PA5 stop temperature must not exceed the global PA5 stop temperature"
+#endif
 
 /* 允许上位机写入的最大 Kp，按 milli 放大保存。 */
 #define APP_HEAT_PID_KP_MAX_MILLI               120000

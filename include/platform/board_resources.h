@@ -7,10 +7,10 @@
 #include <zephyr/drivers/pwm.h>
 
 enum board_ntc_id {
-	BOARD_NTC_OUTLET1 = 0,
-	BOARD_NTC_RESERVED,
-	BOARD_NTC_OUTLET2,
-	BOARD_NTC_KETTLE,
+	BOARD_NTC_OUTLET1 = 0,   /* PB11 */
+	BOARD_NTC_POWER_STAGE,   /* PB10, staged heat feedback */
+	BOARD_NTC_OUTLET2,       /* PB12 */
+	BOARD_NTC_KETTLE,        /* PA5, maximum temperature limit */
 	BOARD_NTC_COUNT,
 };
 

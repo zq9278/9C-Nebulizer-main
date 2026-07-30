@@ -72,27 +72,31 @@ typedef struct {
 } pid_params_t;
 
 typedef struct {
-	int16_t base_offset_deci_c;
-	int16_t target_margin_deci_c;
-	int16_t air_low_offset_deci_c;
-	int16_t air_mid_offset_deci_c;
-	int16_t air_high_offset_deci_c;
-	int16_t mist_low_offset_deci_c;
-	int16_t mist_mid_offset_deci_c;
-	int16_t mist_high_offset_deci_c;
-} outlet_control_params_t;
-
-typedef struct {
-	bool enabled;
-	int16_t target_deci_c;
-} kettle_target_override_t;
-
-typedef struct {
 	bool active;
 	air_level_t fan_level;
 	mist_level_t mist_level;
 	uint16_t heat_output_permille;
 } maintenance_control_t;
+
+typedef enum {
+	HEAT_CONTROL_PHASE_IDLE = 0,
+	HEAT_CONTROL_PHASE_PB10_PREHEAT,
+	HEAT_CONTROL_PHASE_PB11_OUTLET,
+} heat_control_phase_t;
+
+typedef struct {
+	bool enabled;
+	bool saturated;
+	heat_control_phase_t phase;
+	int16_t measured_temp_deci_c;
+	int16_t target_temp_deci_c;
+	int16_t error_deci_c;
+	int32_t p_term_raw;
+	int32_t i_term_raw;
+	int32_t d_term_raw;
+	uint16_t output_delay_us;
+	uint16_t output_permille;
+} heat_control_diag_t;
 
 typedef struct {
 	bool enabled;
@@ -100,15 +104,13 @@ typedef struct {
 	int16_t measured_temp_deci_c;
 	int16_t target_temp_deci_c;
 	int16_t error_deci_c;
-	int16_t kettle_temp_deci_c;
-	int16_t kettle_target_deci_c;
-	int16_t kettle_error_deci_c;
 	int32_t p_term_raw;
 	int32_t i_term_raw;
 	int32_t d_term_raw;
-	uint16_t output_delay_us;
-	uint16_t output_permille;
-} heat_control_diag_t;
+	uint16_t boost_permille;
+	uint8_t base_percent;
+	uint8_t output_percent;
+} fan_control_diag_t;
 
 typedef struct {
 	bool online;
@@ -128,8 +130,11 @@ typedef struct {
 	treatment_config_t config;
 	sensor_snapshot_t sensors;
 	mist_board_status_t mist;
+	pid_params_t preheat_pid;
 	pid_params_t heat_pid;
 	heat_control_diag_t heat_diag;
+	pid_params_t fan_pid;
+	fan_control_diag_t fan_diag;
 	maintenance_control_t maintenance;
 	fault_code_t fault;
 	uint32_t remaining_sec;

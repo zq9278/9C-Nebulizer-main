@@ -62,7 +62,7 @@ static struct board_resources board_res = {
 
 static const bool ntc_enabled[BOARD_NTC_COUNT] = {
 	[BOARD_NTC_OUTLET1] = true,
-	[BOARD_NTC_RESERVED] = true,
+	[BOARD_NTC_POWER_STAGE] = true,
 	[BOARD_NTC_OUTLET2] = true,
 	[BOARD_NTC_KETTLE] = true,
 };

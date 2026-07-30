@@ -105,11 +105,35 @@ void app_context_set_heat_pid(const pid_params_t *pid)
 	k_mutex_unlock(&app_ctx.lock);
 }
 
+/* 写入 PB10 预热 PID 参数快照。 */
+void app_context_set_preheat_pid(const pid_params_t *pid)
+{
+	k_mutex_lock(&app_ctx.lock, K_FOREVER);
+	app_ctx.status.preheat_pid = *pid;
+	k_mutex_unlock(&app_ctx.lock);
+}
+
 /* 写入热控诊断信息，例如当前误差、输出占空比等。 */
 void app_context_set_heat_diag(const heat_control_diag_t *diag)
 {
 	k_mutex_lock(&app_ctx.lock, K_FOREVER);
 	app_ctx.status.heat_diag = *diag;
+	k_mutex_unlock(&app_ctx.lock);
+}
+
+/* 写入出口温度风扇 PID 参数快照。 */
+void app_context_set_fan_pid(const pid_params_t *pid)
+{
+	k_mutex_lock(&app_ctx.lock, K_FOREVER);
+	app_ctx.status.fan_pid = *pid;
+	k_mutex_unlock(&app_ctx.lock);
+}
+
+/* 写入风扇 PID 当前误差、基础风速、附加量和最终输出。 */
+void app_context_set_fan_diag(const fan_control_diag_t *diag)
+{
+	k_mutex_lock(&app_ctx.lock, K_FOREVER);
+	app_ctx.status.fan_diag = *diag;
 	k_mutex_unlock(&app_ctx.lock);
 }
 

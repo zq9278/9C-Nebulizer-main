@@ -147,7 +147,7 @@
 		ntc2: ntc@1 {
 			compatible = "ninec,nebulizer-ntc";
 			reg = <1>;
-			label = "KETTLE_NTC";
+			label = "POWER_STAGE_NTC";
 			io-channels = <&adc1 11>;
 			pullup-ohms = <10000>;
 			nominal-ohms = <10000>;
@@ -169,7 +169,7 @@
 		ntc4: ntc@3 {
 			compatible = "ninec,nebulizer-ntc";
 			reg = <3>;
-			label = "SPARE_NTC_PA5";
+			label = "KETTLE_PID_NTC";
 			io-channels = <&adc1 5>;
 			pullup-ohms = <10000>;
 			nominal-ohms = <10000>;

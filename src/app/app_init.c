@@ -29,6 +29,8 @@ int app_init(void)
 	int ret;
 	treatment_config_t config;
 	pid_params_t pid;
+	pid_params_t preheat_pid;
+	pid_params_t fan_pid;
 
 	/* 初始化全局状态仓库，写入默认配置、默认状态和心跳截止时间。 */
 	ret = app_context_init();
@@ -69,6 +71,19 @@ int app_init(void)
 		return ret;
 	}
 
+	/* 同步并恢复 PB11 出口温度风扇 PID。 */
+	fan_control_get_pid(&fan_pid);
+	app_context_set_fan_pid(&fan_pid);
+	ret = settings_store_load_fan_pid(&fan_pid);
+	if (ret == 0) {
+		ret = fan_control_set_pid(&fan_pid);
+		if (ret != 0) {
+			LOG_ERR("fan pid load failed: %d", ret);
+			return ret;
+		}
+		app_context_set_fan_pid(&fan_pid);
+	}
+
 	/* 热控初始化会建立 PID 默认状态与 TRIAC 控制基础。 */
 	ret = heat_control_init();
 	if (ret != 0) {
@@ -90,6 +105,19 @@ int app_init(void)
 		}
 
 		app_context_set_heat_pid(&pid);
+	}
+
+	/* PB10 预热 PID 使用独立参数，不能与 PB11 出口 PID 共用积分和增益。 */
+	heat_control_get_preheat_pid(&preheat_pid);
+	app_context_set_preheat_pid(&preheat_pid);
+	ret = settings_store_load_preheat_pid(&preheat_pid);
+	if (ret == 0) {
+		ret = heat_control_set_preheat_pid(&preheat_pid);
+		if (ret != 0) {
+			LOG_ERR("preheat pid load failed: %d", ret);
+			return ret;
+		}
+		app_context_set_preheat_pid(&preheat_pid);
 	}
 
 	/* 雾化服务包含对独立雾化板的链路建立与状态机准备。 */

@@ -18,14 +18,10 @@ int host_protocol_encode_config(uint16_t frame_id, const treatment_config_t *con
 				uint8_t *out, size_t out_size, size_t *encoded_len);
 int host_protocol_encode_pid(uint16_t frame_id, const pid_params_t *pid,
 			     uint8_t *out, size_t out_size, size_t *encoded_len);
-int host_protocol_encode_outlet_control(uint16_t frame_id,
-					const outlet_control_params_t *params,
-					uint8_t *out, size_t out_size,
-					size_t *encoded_len);
-int host_protocol_encode_kettle_target(uint16_t frame_id,
-				       const kettle_target_override_t *override,
-				       uint8_t *out, size_t out_size,
-				       size_t *encoded_len);
+int host_protocol_encode_preheat_pid(uint16_t frame_id, const pid_params_t *pid,
+				     uint8_t *out, size_t out_size, size_t *encoded_len);
+int host_protocol_encode_fan_pid(uint16_t frame_id, const pid_params_t *pid,
+				 uint8_t *out, size_t out_size, size_t *encoded_len);
 int host_protocol_encode_runtime(uint16_t frame_id, const telemetry_status_t *status,
 				 uint8_t *out, size_t out_size, size_t *encoded_len);
 int host_protocol_encode_maintenance(uint16_t frame_id, const maintenance_control_t *maintenance,

@@ -18,3 +18,19 @@ void settings_defaults_get_pid(pid_params_t *pid)
 	pid->kd_milli = APP_HEAT_PID_KD_DEFAULT_MILLI;
 	pid->integral_limit_permille = APP_HEAT_PID_I_LIMIT_DEFAULT;
 }
+
+void settings_defaults_get_preheat_pid(pid_params_t *pid)
+{
+	pid->kp_milli = APP_HEAT_PREHEAT_PID_KP_DEFAULT_MILLI;
+	pid->ki_milli = APP_HEAT_PREHEAT_PID_KI_DEFAULT_MILLI;
+	pid->kd_milli = APP_HEAT_PREHEAT_PID_KD_DEFAULT_MILLI;
+	pid->integral_limit_permille = APP_HEAT_PREHEAT_PID_I_LIMIT_DEFAULT;
+}
+
+void settings_defaults_get_fan_pid(pid_params_t *pid)
+{
+	pid->kp_milli = APP_FAN_PID_KP_DEFAULT_MILLI;
+	pid->ki_milli = APP_FAN_PID_KI_DEFAULT_MILLI;
+	pid->kd_milli = APP_FAN_PID_KD_DEFAULT_MILLI;
+	pid->integral_limit_permille = APP_FAN_PID_I_LIMIT_DEFAULT_PERMILLE;
+}

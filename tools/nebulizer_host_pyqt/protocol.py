@@ -20,8 +20,8 @@ class HostFrameType:
     PID = 0x07
     RUNTIME = 0x08
     MAINT = 0x09
-    OUTLET_CTRL = 0x0A
-    KETTLE_TARGET = 0x0B
+    FAN_PID = 0x0A
+    PREHEAT_PID = 0x0B
 
 
 class HostCmd:
@@ -47,12 +47,10 @@ class HostCmd:
     MANUAL_SET_MIST = 0x2E
     MANUAL_SET_HEAT = 0x2F
     GET_MAINTENANCE = 0x30
-    GET_KETTLE_PID = 0x31
-    SET_KETTLE_PID = 0x32
-    GET_OUTLET_CONTROL = 0x33
-    SET_OUTLET_CONTROL = 0x34
-    GET_KETTLE_TARGET = 0x35
-    SET_KETTLE_TARGET = 0x36
+    GET_FAN_PID = 0x31
+    SET_FAN_PID = 0x32
+    GET_PREHEAT_PID = 0x33
+    SET_PREHEAT_PID = 0x34
 
 
 @dataclass

@@ -11,7 +11,8 @@ The design goal is to let a maintenance engineer or manufacturing tool:
 - monitor treatment state, fault state, temperatures, fan, mist board, cover, liquid level
 - send all main treatment control commands
 - read and write treatment parameters
-- switch between outlet loop tuning and kettle PID tuning online
+- tune the independent PB10 preheat PID and PB11 outlet PID online
+- tune the independent PB11 outlet-temperature fan PID online
 - observe protocol ACK/NACK, heartbeat, and communication exceptions
 
 ## Recommended Desktop Layout
@@ -35,17 +36,22 @@ Recommended layout:
   - air level
   - mist level
   - start / pause / resume / stop / clear fault
-- Left temperature debug channel:
-  - outlet loop parameter pane
-  - kettle PID parameter pane
-  - switching the channel also switches the trend view
-- Left Kettle PID Debug pane:
+- Left Outlet PID Tuning pane:
   - `Kp`
   - `Ki`
   - `Kd`
   - integral limit
-  - read kettle PID
-  - apply kettle PID
+  - live PB11 temperature, outlet target, and PID error
+  - phase-aware tuning hints
+  - read/apply outlet PID parameters
+- Left Preheat PID Tuning pane:
+  - independent PB10 `Kp/Ki/Kd` and integral limit
+  - fixed `55.0°C` preheat target and `80%` output limit
+  - live active phase, PB10 error, output, and target
+- Left Fan PID Tuning pane:
+  - `Kp/Ki/Kd` and integral limit
+  - LOW `40..50%`, MID `60..70%`, HIGH `80..90%` limits
+  - live PB11 error, base output, PID boost, and final fan PWM
 - Left maintenance pane:
   - enter/exit maintenance mode
   - manual fan level
@@ -119,10 +125,8 @@ Existing control commands on `USART1`:
 New commands added for host software completeness:
 
 - `HOST_CMD_GET_CONFIG`
-- `HOST_CMD_GET_KETTLE_PID`
-- `HOST_CMD_SET_KETTLE_PID`
-- `HOST_CMD_GET_OUTLET_CONTROL`
-- `HOST_CMD_SET_OUTLET_CONTROL`
+- `HOST_CMD_GET_PID`
+- `HOST_CMD_SET_PID`
 - `HOST_CMD_GET_RUNTIME`
 - `HOST_CMD_ENTER_MAINTENANCE`
 - `HOST_CMD_EXIT_MAINTENANCE`
@@ -130,6 +134,10 @@ New commands added for host software completeness:
 - `HOST_CMD_MANUAL_SET_MIST`
 - `HOST_CMD_MANUAL_SET_HEAT`
 - `HOST_CMD_GET_MAINTENANCE`
+- `HOST_CMD_GET_FAN_PID`
+- `HOST_CMD_SET_FAN_PID`
+- `HOST_CMD_GET_PREHEAT_PID`
+- `HOST_CMD_SET_PREHEAT_PID`
 
 ## Response Frames
 
@@ -160,15 +168,6 @@ PID frame:
   - `triac_min_delay_us u16`
   - `triac_max_delay_us u16`
 
-Outlet control frame:
-
-- type: `HOST_FRAME_TYPE_OUTLET_CTRL`
-- fields:
-  - `base_offset_deci_c i16`
-  - `target_margin_deci_c i16`
-  - `air_low/mid/high_offset_deci_c i16`
-  - `mist_low/mid/high_offset_deci_c i16`
-
 Runtime frame:
 
 - type: `HOST_FRAME_TYPE_RUNTIME`
@@ -198,6 +197,10 @@ Runtime frame:
   - `maintenance_fan_level u8`
   - `maintenance_mist_level u8`
   - `maintenance_heat_permille_div10 u8`
+  - fan PID enabled/saturated flags
+  - fan PID base/final PWM percent
+  - fan PID boost, PB11 error, measured temperature, target, and integral term
+  - `heat_control_phase`: `0=IDLE`, `1=PB10 PREHEAT PID`, `2=PB11 OUTLET PID`
 
 Maintenance frame:
 
@@ -216,38 +219,45 @@ Recommended refresh strategy for the PC app:
 - `GET_STATUS`: every `500 ms`
 - `GET_RUNTIME`: every `1000 ms`
 - `GET_CONFIG`: every `3000 ms` or after a config write
-- `GET_OUTLET_CONTROL`: after connection or after outlet loop apply
-- `GET_KETTLE_PID`: after connection or after kettle PID apply
+- `GET_PID`: after connection or after outlet PID apply
+- `GET_PREHEAT_PID`: after connection or after preheat PID apply
 - `GET_MAINTENANCE`: on maintenance page entry and after manual output writes
 
 This keeps the UI responsive without flooding `USART1`.
 
 ## Temperature Tuning Path
 
-The host UI provides two switchable tuning channels:
-
-- `Outlet Temp Loop`: tunes how outlet target temperature is converted into kettle virtual target temperature.
-- `Kettle PID Loop`: tunes how kettle temperature follows the virtual kettle target.
-
-When the selected channel changes, the trend widget switches to the related curves automatically.
+The host UI provides two sequential heater-control tuning paths. PB10 first regulates to
+the fixed 55C preheat target. When PB11 is within 2C of the outlet target, control latches
+to PB11 using `OutletTarget - PB11 OutletTemp`.
 
 ## PID Tuning Path
 
-Current firmware now exposes a fixed-point kettle inner-loop PID controller.
+Current firmware exposes two independent fixed-point heater PID controllers. PB10 preheat
+uses `55C - PB10`, defaults to P-only control, disables integral outside the final 5C band,
+and applies saturation anti-windup. After the one-way handoff, PB11 owns heater output and
+its output ceiling ramps to the configured limit over 10 seconds.
 
 Host workflow:
 
 1. Connect to `USART1`
-2. Read current PID via `HOST_CMD_GET_KETTLE_PID`
+2. Read both PIDs via `HOST_CMD_GET_PREHEAT_PID` and `HOST_CMD_GET_PID`
 3. Display `Kp/Ki/Kd` as `value / 1000.0`
 4. Let the engineer edit values online
-5. Send `HOST_CMD_SET_KETTLE_PID`
+5. Send `HOST_CMD_SET_PREHEAT_PID` or `HOST_CMD_SET_PID`
 6. Wait for ACK and updated PID frame
 7. Observe runtime frame values:
    - heat enable
    - output delay
+   - PB11 measured temperature
+   - outlet target and error
+   - output power and integral contribution
    - output permille
    - temperature error
+
+The fan PID is independent from the heater PID. It uses
+`PB11 OutletTemp - OutletTarget`; only positive error can increase fan PWM, and the
+increase is clamped to 10 percentage points above the selected LOW/MID/HIGH base.
 
 ## Exception Handling
 

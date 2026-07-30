@@ -20,9 +20,15 @@ static struct {
 	uint8_t ntc_short_mask;
 	bool mist_fault_logged;
 	bool mist_offline_logged;
-	bool kettle_overtemp_logged;
 	bool outlet_overtemp_logged;
 } safety_log_state;
+
+/* PA5 高温时跟踪 PB11 的当前连续下降段，用于识别疑似管道积水。 */
+static struct {
+	bool tracking;
+	int16_t peak_deci_c;
+	int16_t lowest_deci_c;
+} safety_pipe_water_state;
 
 /*
  * 盖子相关状态单独封装，是因为它需要：
@@ -114,12 +120,58 @@ static void safety_service_cover_set_pause_latched(bool active)
 	k_mutex_unlock(&safety_cover_state.lock);
 }
 
+static void safety_service_pipe_water_reset(void)
+{
+	safety_pipe_water_state.tracking = false;
+	safety_pipe_water_state.peak_deci_c = 0;
+	safety_pipe_water_state.lowest_deci_c = 0;
+}
+
+/*
+ * 仅在热疗且 PA5 >= 98C 时统计 PB11 的连续下降量。
+ * 允许不超过 0.2C 的采样抖动；明显回升后从新的温度重新统计。
+ */
+static bool safety_service_pipe_water_detected(const telemetry_status_t *status)
+{
+	int16_t pb11_deci_c = status->sensors.ntc_deci_c[BOARD_NTC_OUTLET1];
+	int16_t pa5_deci_c = status->sensors.ntc_deci_c[BOARD_NTC_KETTLE];
+
+	if ((status->state != TREATMENT_STATE_RUNNING_HOT) ||
+	    (pa5_deci_c < APP_PIPE_WATER_PA5_MIN_DECI_C)) {
+		safety_service_pipe_water_reset();
+		return false;
+	}
+
+	if (!safety_pipe_water_state.tracking) {
+		safety_pipe_water_state.tracking = true;
+		safety_pipe_water_state.peak_deci_c = pb11_deci_c;
+		safety_pipe_water_state.lowest_deci_c = pb11_deci_c;
+		return false;
+	}
+
+	if (pb11_deci_c < safety_pipe_water_state.lowest_deci_c) {
+		safety_pipe_water_state.lowest_deci_c = pb11_deci_c;
+	} else if (pb11_deci_c >
+		   (safety_pipe_water_state.lowest_deci_c +
+		    APP_PIPE_WATER_PB11_RISE_RESET_DECI_C)) {
+		safety_pipe_water_state.peak_deci_c = pb11_deci_c;
+		safety_pipe_water_state.lowest_deci_c = pb11_deci_c;
+	} else if (pb11_deci_c > safety_pipe_water_state.peak_deci_c) {
+		/* 小幅抖动不打断统计，但同步抬高下降段的起点。 */
+		safety_pipe_water_state.peak_deci_c = pb11_deci_c;
+	}
+
+	return ((int32_t)safety_pipe_water_state.peak_deci_c - pb11_deci_c) >=
+	       APP_PIPE_WATER_PB11_DROP_DECI_C;
+}
+
 /* 初始化互斥锁与防抖延时工作项。 */
 int safety_service_init(void)
 {
 	k_mutex_init(&safety_cover_state.lock);
 	k_work_init_delayable(&safety_cover_state.cover_debounce_work,
 			      safety_service_cover_debounce_work);
+	safety_service_pipe_water_reset();
 	return 0;
 }
 
@@ -166,6 +218,7 @@ struct safety_result safety_service_poll(void)
 	if ((status.state == TREATMENT_STATE_BOOT) ||
 	    (status.state == TREATMENT_STATE_DONE)) {
 		safety_service_cover_set_pause_latched(false);
+		safety_service_pipe_water_reset();
 		return result;
 	}
 
@@ -187,26 +240,6 @@ struct safety_result safety_service_poll(void)
 	}
 
 	/* Stainless pot water level interlock is temporarily disabled during bring-up. */
-
-	if (status.sensors.ntc_deci_c[BOARD_NTC_KETTLE] >= APP_KETTLE_OVER_TEMP_FAULT_DECI_C) {
-		if (!safety_log_state.kettle_overtemp_logged) {
-			LOG_ERR("kettle over temp: %d.%dC",
-				status.sensors.ntc_deci_c[BOARD_NTC_KETTLE] / 10,
-				abs(status.sensors.ntc_deci_c[BOARD_NTC_KETTLE] % 10));
-			safety_log_state.kettle_overtemp_logged = true;
-		}
-
-		if (status.fault == FAULT_KETTLE_OVER_TEMP) {
-			safety_service_enter_safe_state(FAULT_KETTLE_OVER_TEMP);
-			return result;
-		}
-
-		safety_service_enter_safe_state(FAULT_KETTLE_OVER_TEMP);
-		result.fault = FAULT_KETTLE_OVER_TEMP;
-		return result;
-	}
-
-	safety_log_state.kettle_overtemp_logged = false;
 
 	if (status.sensors.ntc_deci_c[BOARD_NTC_OUTLET2] >= APP_OUTLET1_OVER_TEMP_FAULT_DECI_C) {
 		if (!safety_log_state.outlet_overtemp_logged) {
@@ -299,6 +332,22 @@ struct safety_result safety_service_poll(void)
 		}
 
 		safety_log_state.ntc_short_mask &= ~bit;
+	}
+
+	if (safety_service_pipe_water_detected(&status)) {
+		int16_t pb11_deci_c = status.sensors.ntc_deci_c[BOARD_NTC_OUTLET1];
+		int16_t pa5_deci_c = status.sensors.ntc_deci_c[BOARD_NTC_KETTLE];
+
+		LOG_ERR("pipe water detected: PB11 %d.%dC -> %d.%dC, PA5 %d.%dC",
+			safety_pipe_water_state.peak_deci_c / 10,
+			abs(safety_pipe_water_state.peak_deci_c % 10),
+			pb11_deci_c / 10,
+			abs(pb11_deci_c % 10),
+			pa5_deci_c / 10,
+			abs(pa5_deci_c % 10));
+		safety_service_enter_safe_state(FAULT_PIPE_WATER);
+		result.fault = FAULT_PIPE_WATER;
+		return result;
 	}
 
 	if (status.mist.low_water) {

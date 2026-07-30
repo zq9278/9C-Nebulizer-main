@@ -11,6 +11,7 @@
 #include <protocols/common/ring_frame_parser.h>
 #include <services/communication/host_comm_tx.h>
 #include <services/heat/heat_control.h>
+#include <services/fan/fan_control.h>
 #include <src/app/app_context.h>
 #include <src/app/app_events.h>
 #include <zephyr/kernel.h>
@@ -30,8 +31,6 @@ static bool host_comm_service_handle_readonly_cmd(const host_cmd_event_t *cmd)
 {
 	telemetry_status_t status;
 	pid_params_t pid;
-	outlet_control_params_t outlet;
-	kettle_target_override_t kettle_target;
 
 	if (cmd == NULL) {
 		return false;
@@ -61,21 +60,20 @@ static bool host_comm_service_handle_readonly_cmd(const host_cmd_event_t *cmd)
 		return true;
 
 	case HOST_CMD_GET_PID:
-	case HOST_CMD_GET_KETTLE_PID:
 		heat_control_get_pid(&pid);
 		(void)host_comm_service_send_pid(&pid);
 		(void)host_comm_service_send_ack(cmd->frame_id, cmd->command_id, true, 0U);
 		return true;
 
-	case HOST_CMD_GET_OUTLET_CONTROL:
-		heat_control_get_outlet_params(&outlet);
-		(void)host_comm_service_send_outlet_control(&outlet);
+	case HOST_CMD_GET_PREHEAT_PID:
+		heat_control_get_preheat_pid(&pid);
+		(void)host_comm_service_send_preheat_pid(&pid);
 		(void)host_comm_service_send_ack(cmd->frame_id, cmd->command_id, true, 0U);
 		return true;
 
-	case HOST_CMD_GET_KETTLE_TARGET:
-		heat_control_get_kettle_target_override(&kettle_target);
-		(void)host_comm_service_send_kettle_target(&kettle_target);
+	case HOST_CMD_GET_FAN_PID:
+		fan_control_get_pid(&pid);
+		(void)host_comm_service_send_fan_pid(&pid);
 		(void)host_comm_service_send_ack(cmd->frame_id, cmd->command_id, true, 0U);
 		return true;
 
@@ -213,14 +211,14 @@ int host_comm_service_send_pid(const pid_params_t *pid)
 	return host_comm_tx_enqueue(frame, frame_len);
 }
 
-int host_comm_service_send_outlet_control(const outlet_control_params_t *params)
+int host_comm_service_send_preheat_pid(const pid_params_t *pid)
 {
 	uint8_t frame[FRAME_CODEC_MAX_FRAME];
 	size_t frame_len;
 	int ret;
 
-	ret = host_protocol_encode_outlet_control(status_frame_id++, params, frame, sizeof(frame),
-						  &frame_len);
+	ret = host_protocol_encode_preheat_pid(status_frame_id++, pid, frame, sizeof(frame),
+					       &frame_len);
 	if (ret != 0) {
 		return ret;
 	}
@@ -228,14 +226,13 @@ int host_comm_service_send_outlet_control(const outlet_control_params_t *params)
 	return host_comm_tx_enqueue(frame, frame_len);
 }
 
-int host_comm_service_send_kettle_target(const kettle_target_override_t *override)
+int host_comm_service_send_fan_pid(const pid_params_t *pid)
 {
 	uint8_t frame[FRAME_CODEC_MAX_FRAME];
 	size_t frame_len;
 	int ret;
 
-	ret = host_protocol_encode_kettle_target(status_frame_id++, override, frame,
-						 sizeof(frame), &frame_len);
+	ret = host_protocol_encode_fan_pid(status_frame_id++, pid, frame, sizeof(frame), &frame_len);
 	if (ret != 0) {
 		return ret;
 	}

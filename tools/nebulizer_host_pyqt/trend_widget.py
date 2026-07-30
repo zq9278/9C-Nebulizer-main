@@ -12,10 +12,9 @@ class TrendWidget(QWidget):
         super().__init__()
         self._samples: deque[dict[str, float]] = deque(maxlen=3600)
         self._pid_summary = "PID: N/A"
-        self._channel = "outlet"
         self._visible = {
             "outlet": True,
-            "kettle": True,
+            "stage": True,
             "target": True,
             "output": True,
             "error": True,
@@ -31,24 +30,20 @@ class TrendWidget(QWidget):
     def add_sample(
         self,
         outlet_c: float,
-        kettle_c: float,
+        stage_c: float,
         target_c: float,
         output_percent: float,
         error_c: float,
         integral_percent: float,
-        kettle_target_c: float,
-        kettle_error_c: float,
     ) -> None:
         self._samples.append(
             {
                 "outlet": outlet_c,
-                "kettle": kettle_c,
+                "stage": stage_c,
                 "target": target_c,
                 "output": output_percent,
                 "error": error_c,
                 "integral": integral_percent,
-                "kettle_target": kettle_target_c,
-                "kettle_error": kettle_error_c,
             }
         )
         if self._auto_follow:
@@ -69,18 +64,9 @@ class TrendWidget(QWidget):
         self._pid_summary = f"PID  Kp={kp:.3f}  Ki={ki:.3f}  Kd={kd:.3f}  I={i_limit}"
         self.update()
 
-    def set_channel(self, channel: str) -> None:
-        if channel in {"outlet", "kettle"}:
-            self._channel = channel
-            self.update()
-
     def set_series_visible(self, name: str, visible: bool) -> None:
         if name in self._visible:
             self._visible[name] = visible
-            if name == "target":
-                self._visible["kettle_target"] = visible
-            if name == "error":
-                self._visible["kettle_error"] = visible
             self.update()
 
     def zoom_in(self) -> None:
@@ -132,44 +118,26 @@ class TrendWidget(QWidget):
             ("100%", "75", "50", "25", "-10C"),
         )
 
-        if self._channel == "kettle":
-            temp_min, temp_max = self._series_range(("kettle", "kettle_target"), 20.0, 120.0)
-            self._draw_axis_labels(painter, top_rect, self._temperature_axis_labels(temp_min, temp_max))
-            self._draw_series(painter, top_rect, "kettle", temp_min, temp_max, QColor("#4ecdc4"))
-            self._draw_series(painter, top_rect, "kettle_target", temp_min, temp_max, QColor("#ffe66d"))
-            self._draw_series(painter, bottom_rect, "output", 0.0, 100.0, QColor("#7bd389"))
-            self._draw_series(painter, bottom_rect, "kettle_error", -10.0, 30.0, QColor("#a78bfa"))
-            self._draw_series(painter, bottom_rect, "integral", 0.0, 100.0, QColor("#f59e0b"))
-            self._draw_legend(
-                painter,
-                outer.left(),
-                [
-                    ("Kettle", QColor("#4ecdc4")),
-                    ("Kettle Target", QColor("#ffe66d")),
-                    ("Power", QColor("#7bd389")),
-                    ("Kettle Error", QColor("#a78bfa")),
-                    ("Integral", QColor("#f59e0b")),
-                ],
-            )
-        else:
-            temp_min, temp_max = self._series_range(("outlet", "target", "kettle_target"), 20.0, 120.0)
-            self._draw_axis_labels(painter, top_rect, self._temperature_axis_labels(temp_min, temp_max))
-            self._draw_series(painter, top_rect, "outlet", temp_min, temp_max, QColor("#ff6b6b"))
-            self._draw_series(painter, top_rect, "target", temp_min, temp_max, QColor("#ffe66d"))
-            self._draw_series(painter, top_rect, "kettle_target", temp_min, temp_max, QColor("#4ecdc4"))
-            self._draw_series(painter, bottom_rect, "output", 0.0, 100.0, QColor("#7bd389"))
-            self._draw_series(painter, bottom_rect, "error", -10.0, 20.0, QColor("#a78bfa"))
-            self._draw_legend(
-                painter,
-                outer.left(),
-                [
-                    ("Outlet", QColor("#ff6b6b")),
-                    ("Outlet Target", QColor("#ffe66d")),
-                    ("Kettle Target", QColor("#4ecdc4")),
-                    ("Power", QColor("#7bd389")),
-                    ("Outlet Error", QColor("#a78bfa")),
-                ],
-            )
+        temp_min, temp_max = self._series_range(("outlet", "stage", "target"), 20.0, 70.0)
+        self._draw_axis_labels(painter, top_rect, self._temperature_axis_labels(temp_min, temp_max))
+        self._draw_series(painter, top_rect, "outlet", temp_min, temp_max, QColor("#ff6b6b"))
+        self._draw_series(painter, top_rect, "stage", temp_min, temp_max, QColor("#4ecdc4"))
+        self._draw_series(painter, top_rect, "target", temp_min, temp_max, QColor("#ffe66d"))
+        self._draw_series(painter, bottom_rect, "output", 0.0, 100.0, QColor("#7bd389"))
+        self._draw_series(painter, bottom_rect, "error", -10.0, 20.0, QColor("#a78bfa"))
+        self._draw_series(painter, bottom_rect, "integral", 0.0, 100.0, QColor("#f59e0b"))
+        self._draw_legend(
+            painter,
+            outer.left(),
+            [
+                ("PB11 Outlet", QColor("#ff6b6b")),
+                ("PB10 Stage", QColor("#4ecdc4")),
+                ("Outlet Target", QColor("#ffe66d")),
+                ("Power", QColor("#7bd389")),
+                ("Outlet Error", QColor("#a78bfa")),
+                ("Integral", QColor("#f59e0b")),
+            ],
+        )
 
     def _draw_grid(self, painter: QPainter, rect: QRectF) -> None:
         painter.setPen(QColor("#293241"))

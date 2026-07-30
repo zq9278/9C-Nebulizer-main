@@ -32,7 +32,10 @@ treatment_state_t app_context_get_state(void);
 void app_context_set_sensor_snapshot(const sensor_snapshot_t *snapshot);
 void app_context_set_mist_status(const mist_board_status_t *status);
 void app_context_set_heat_pid(const pid_params_t *pid);
+void app_context_set_preheat_pid(const pid_params_t *pid);
 void app_context_set_heat_diag(const heat_control_diag_t *diag);
+void app_context_set_fan_pid(const pid_params_t *pid);
+void app_context_set_fan_diag(const fan_control_diag_t *diag);
 void app_context_set_maintenance(const maintenance_control_t *maintenance);
 
 /* 故障状态接口。fault_manager 只是薄封装，最终也会落到这里。 */

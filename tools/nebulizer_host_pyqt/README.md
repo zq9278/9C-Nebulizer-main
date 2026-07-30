@@ -44,7 +44,7 @@ Do not run `serial_client.py` directly. It is a library module used by `app.py`.
 
 - USART1 live monitoring
 - treatment control
-- PID online tuning
+- independent PB10 preheat PID, PB11 outlet PID, and outlet-temperature fan PID tuning
 - maintenance mode manual fan/mist/heat control
 - fault history
 - outlet/kettle/target temperature trend
@@ -53,11 +53,11 @@ Do not run `serial_client.py` directly. It is a library module used by `app.py`.
 
 ## Read Behavior
 
-- connect success: automatic one-time read of `Config / PID / Status / Runtime / Maintenance`
+- connect success: automatic one-time read of `Config / Preheat PID / Outlet PID / Status / Runtime / Maintenance`
 - connected state automatic refresh:
   - `Status` every `500 ms`
   - `Runtime` every `500 ms`
   - `Maintenance` every `1000 ms`
-- `Config` and `PID` stay manual to avoid overwriting local edits before `Apply`
+- `Config` and all PID groups stay manual to avoid overwriting local edits before `Apply`
 - heartbeat remains automatic so the host link stays alive
 - `Read All` is still available when you want an immediate manual refresh
