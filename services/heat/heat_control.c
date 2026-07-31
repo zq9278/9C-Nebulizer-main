@@ -21,10 +21,8 @@ struct heat_control_ctx {
 	heat_control_diag_t diag;
 	int16_t last_error_deci_c;
 	uint32_t last_pid_update_ms;
-	uint32_t outlet_handoff_start_ms;
 	bool first_sample;
 	bool pa5_heat_limited;
-	bool outlet_pid_latched;
 };
 
 static struct heat_control_ctx heat_ctx;
@@ -74,8 +72,6 @@ static void heat_control_reset_locked(void)
 	heat_ctx.first_sample = true;
 	heat_ctx.last_error_deci_c = 0;
 	heat_ctx.last_pid_update_ms = 0U;
-	heat_ctx.outlet_handoff_start_ms = 0U;
-	heat_ctx.outlet_pid_latched = false;
 }
 
 static bool heat_control_pid_valid(const pid_params_t *pid)
@@ -110,14 +106,13 @@ fault_code_t heat_control_step(const telemetry_status_t *status)
 {
 	const pid_params_t *active_pid;
 	heat_control_phase_t phase;
+	heat_control_phase_t previous_phase;
 	int16_t outlet_temp;
 	int16_t kettle_temp;
-	int16_t pb10_temp;
 	int16_t overtemp_protect_temp;
 	int16_t measured_temp;
 	int16_t target_temp;
 	int16_t error_deci_c;
-	int16_t outlet_error_deci_c;
 	int16_t pid_error_delta_deci_c;
 	int32_t i_limit_raw;
 	int32_t output_raw;
@@ -128,11 +123,9 @@ fault_code_t heat_control_step(const telemetry_status_t *status)
 	uint32_t pid_period_ms;
 	uint32_t now_ms;
 	uint32_t elapsed_ms;
-	uint32_t handoff_elapsed_ms;
 	uint16_t active_pa5_stop_deci_c;
 	bool was_limited;
-	bool phase_changed = false;
-	bool allow_integral;
+	bool phase_changed;
 
 	if (status == NULL) {
 		return FAULT_INIT_FAILED;
@@ -140,7 +133,6 @@ fault_code_t heat_control_step(const telemetry_status_t *status)
 
 	outlet_temp = status->sensors.ntc_deci_c[BOARD_NTC_OUTLET1];
 	kettle_temp = status->sensors.ntc_deci_c[BOARD_NTC_KETTLE];
-	pb10_temp = status->sensors.ntc_deci_c[BOARD_NTC_POWER_STAGE];
 	overtemp_protect_temp = status->sensors.ntc_deci_c[BOARD_NTC_OUTLET2];
 
 	if ((status->config.mode != TREATMENT_MODE_HOT) ||
@@ -150,7 +142,6 @@ fault_code_t heat_control_step(const telemetry_status_t *status)
 	}
 
 	if (status->sensors.ntc_open[BOARD_NTC_OUTLET1] ||
-	    status->sensors.ntc_open[BOARD_NTC_POWER_STAGE] ||
 	    status->sensors.ntc_open[BOARD_NTC_KETTLE] ||
 	    status->sensors.ntc_open[BOARD_NTC_OUTLET2]) {
 		heat_control_stop();
@@ -158,7 +149,6 @@ fault_code_t heat_control_step(const telemetry_status_t *status)
 	}
 
 	if (status->sensors.ntc_short[BOARD_NTC_OUTLET1] ||
-	    status->sensors.ntc_short[BOARD_NTC_POWER_STAGE] ||
 	    status->sensors.ntc_short[BOARD_NTC_KETTLE] ||
 	    status->sensors.ntc_short[BOARD_NTC_OUTLET2]) {
 		heat_control_stop();
@@ -171,39 +161,30 @@ fault_code_t heat_control_step(const telemetry_status_t *status)
 	}
 
 	now_ms = k_uptime_get_32();
-	outlet_error_deci_c = (int16_t)status->config.target_temp_deci_c - outlet_temp;
-	k_mutex_lock(&heat_ctx.lock, K_FOREVER);
-	if (!heat_ctx.outlet_pid_latched &&
-	    (outlet_error_deci_c <= APP_HEAT_OUTLET_PID_ENTRY_BAND_DECI_C)) {
-		heat_ctx.outlet_pid_latched = true;
-		heat_ctx.outlet_handoff_start_ms = now_ms;
-		phase_changed = true;
-	}
-
-	phase = heat_ctx.outlet_pid_latched ? HEAT_CONTROL_PHASE_PB11_OUTLET :
-					       HEAT_CONTROL_PHASE_PB10_PREHEAT;
-	heat_control_prepare_phase_locked(phase);
-	k_mutex_unlock(&heat_ctx.lock);
-
-	if (phase_changed) {
-		LOG_INF("PB11 within outlet target band: error=%d, switching from PB10 to PB11 PID",
-			outlet_error_deci_c);
-	}
-
-	if (phase == HEAT_CONTROL_PHASE_PB10_PREHEAT) {
-		measured_temp = pb10_temp;
-		target_temp = APP_HEAT_PREHEAT_TARGET_DECI_C;
+	phase = (outlet_temp < APP_HEAT_FULL_POWER_BELOW_DECI_C) ?
+		HEAT_CONTROL_PHASE_PB11_FULL_POWER : HEAT_CONTROL_PHASE_PB11_OUTLET;
+	measured_temp = outlet_temp;
+	if (phase == HEAT_CONTROL_PHASE_PB11_FULL_POWER) {
+		target_temp = APP_HEAT_FULL_POWER_BELOW_DECI_C;
 		active_pa5_stop_deci_c = APP_HEAT_PA5_STOP_DECI_C;
-		pid_period_ms = APP_HEAT_PREHEAT_PID_PERIOD_MS;
-		output_max_permille = APP_HEAT_PREHEAT_PID_OUTPUT_MAX_PERMILLE;
+		output_max_permille = APP_HEAT_FULL_POWER_PERMILLE;
 	} else {
-		measured_temp = outlet_temp;
 		target_temp = (int16_t)status->config.target_temp_deci_c;
 		active_pa5_stop_deci_c = APP_HEAT_PID_PA5_STOP_DECI_C;
-		pid_period_ms = APP_HEAT_PID_PERIOD_MS;
 		output_max_permille = APP_HEAT_PID_OUTPUT_MAX_PERMILLE;
 	}
 	error_deci_c = target_temp - measured_temp;
+
+	k_mutex_lock(&heat_ctx.lock, K_FOREVER);
+	previous_phase = heat_ctx.diag.phase;
+	heat_control_prepare_phase_locked(phase);
+	phase_changed = previous_phase != phase;
+	k_mutex_unlock(&heat_ctx.lock);
+
+	if (phase_changed) {
+		LOG_INF("heat phase changed: PB11=%d threshold=%d phase=%u",
+			outlet_temp, APP_HEAT_FULL_POWER_BELOW_DECI_C, (unsigned int)phase);
+	}
 
 	if (kettle_temp >= active_pa5_stop_deci_c) {
 		k_mutex_lock(&heat_ctx.lock, K_FOREVER);
@@ -241,7 +222,20 @@ fault_code_t heat_control_step(const telemetry_status_t *status)
 	heat_ctx.diag.target_temp_deci_c = target_temp;
 	heat_ctx.diag.error_deci_c = error_deci_c;
 
-	/* 两个阶段达到各自目标时均立即停热并清空该阶段积分。 */
+	if (phase == HEAT_CONTROL_PHASE_PB11_FULL_POWER) {
+		heat_ctx.diag.saturated = false;
+		heat_ctx.diag.p_term_raw = 0;
+		heat_ctx.diag.i_term_raw = 0;
+		heat_ctx.diag.d_term_raw = 0;
+		heat_ctx.diag.output_permille = (uint16_t)output_max_permille;
+		heat_ctx.diag.output_delay_us = 0U;
+		k_mutex_unlock(&heat_ctx.lock);
+		triac_control_set_output_permille((uint16_t)output_max_permille);
+		triac_control_set_enabled(true);
+		return FAULT_NONE;
+	}
+
+	/* PB11 达到出口目标后立即停热并清空 PID 积分。 */
 	if (error_deci_c <= 0) {
 		heat_control_publish_idle_diag_locked(phase, measured_temp, target_temp,
 						      error_deci_c);
@@ -250,50 +244,35 @@ fault_code_t heat_control_step(const telemetry_status_t *status)
 		return FAULT_NONE;
 	}
 
+	pid_period_ms = APP_HEAT_PID_PERIOD_MS;
 	elapsed_ms = (heat_ctx.last_pid_update_ms == 0U) ?
 		     pid_period_ms : (now_ms - heat_ctx.last_pid_update_ms);
-	if ((phase == HEAT_CONTROL_PHASE_PB11_OUTLET) &&
-	    (APP_HEAT_PID_HANDOFF_RAMP_MS > 0U)) {
-		handoff_elapsed_ms = now_ms - heat_ctx.outlet_handoff_start_ms;
-		if (handoff_elapsed_ms < APP_HEAT_PID_HANDOFF_RAMP_MS) {
-			output_max_permille =
-				(APP_HEAT_PID_OUTPUT_MAX_PERMILLE * handoff_elapsed_ms) /
-				APP_HEAT_PID_HANDOFF_RAMP_MS;
-		}
-	}
 
 	if (elapsed_ms < pid_period_ms) {
-		/* PID本体每5秒计算一次，但交接输出上限按20ms控制节拍平滑爬升。 */
-		if (phase == HEAT_CONTROL_PHASE_PB11_OUTLET) {
-			output_raw = heat_ctx.diag.p_term_raw + heat_ctx.diag.i_term_raw +
-				     heat_ctx.diag.d_term_raw;
-			if (output_raw < 0) {
-				output_raw = 0;
-			}
-			output_permille = (uint32_t)(output_raw / 1000);
-			heat_ctx.diag.saturated = output_permille >= output_max_permille;
-			if (output_permille > output_max_permille) {
-				output_permille = output_max_permille;
-			}
-			heat_ctx.diag.output_permille = (uint16_t)output_permille;
-			heat_ctx.diag.output_delay_us =
-				(output_permille == 0U) ? TRIAC_MAX_DELAY_US : 0U;
-			k_mutex_unlock(&heat_ctx.lock);
-			if (output_permille == 0U) {
-				(void)triac_control_stop();
-			} else {
-				triac_control_set_output_permille((uint16_t)output_permille);
-				triac_control_set_enabled(true);
-			}
-			return FAULT_NONE;
+		output_raw = heat_ctx.diag.p_term_raw + heat_ctx.diag.i_term_raw +
+			     heat_ctx.diag.d_term_raw;
+		if (output_raw < 0) {
+			output_raw = 0;
 		}
-
+		output_permille = (uint32_t)(output_raw / 1000);
+		heat_ctx.diag.saturated = output_permille >= output_max_permille;
+		if (output_permille > output_max_permille) {
+			output_permille = output_max_permille;
+		}
+		heat_ctx.diag.output_permille = (uint16_t)output_permille;
+		heat_ctx.diag.output_delay_us =
+			(output_permille == 0U) ? TRIAC_MAX_DELAY_US : 0U;
 		k_mutex_unlock(&heat_ctx.lock);
+		if (output_permille == 0U) {
+			(void)triac_control_stop();
+		} else {
+			triac_control_set_output_permille((uint16_t)output_permille);
+			triac_control_set_enabled(true);
+		}
 		return FAULT_NONE;
 	}
 	heat_ctx.last_pid_update_ms = now_ms;
-	active_pid = (phase == HEAT_CONTROL_PHASE_PB10_PREHEAT) ?
-		     &heat_ctx.preheat_pid : &heat_ctx.outlet_pid;
+	active_pid = &heat_ctx.outlet_pid;
 
 	heat_ctx.diag.p_term_raw = active_pid->kp_milli * error_deci_c;
 	if (heat_ctx.first_sample) {
@@ -303,23 +282,17 @@ fault_code_t heat_control_step(const telemetry_status_t *status)
 		heat_ctx.diag.d_term_raw = active_pid->kd_milli * pid_error_delta_deci_c;
 	}
 
-	allow_integral = (phase == HEAT_CONTROL_PHASE_PB11_OUTLET) ||
-			 (error_deci_c <= APP_HEAT_PREHEAT_PID_I_ENABLE_BAND_DECI_C);
 	candidate_i_term_raw = heat_ctx.diag.i_term_raw;
-	if (allow_integral) {
-		integral_raw = (int64_t)heat_ctx.diag.i_term_raw +
-			       ((int64_t)active_pid->ki_milli * error_deci_c * elapsed_ms) / 100;
-		i_limit_raw = active_pid->integral_limit_permille * 1000;
-		if (integral_raw > i_limit_raw) {
-			integral_raw = i_limit_raw;
-		}
-		if (integral_raw < -i_limit_raw) {
-			integral_raw = -i_limit_raw;
-		}
-		candidate_i_term_raw = (int32_t)integral_raw;
-	} else {
-		candidate_i_term_raw = 0;
+	integral_raw = (int64_t)heat_ctx.diag.i_term_raw +
+		       ((int64_t)active_pid->ki_milli * error_deci_c * elapsed_ms) / 100;
+	i_limit_raw = active_pid->integral_limit_permille * 1000;
+	if (integral_raw > i_limit_raw) {
+		integral_raw = i_limit_raw;
 	}
+	if (integral_raw < -i_limit_raw) {
+		integral_raw = -i_limit_raw;
+	}
+	candidate_i_term_raw = (int32_t)integral_raw;
 
 	/* 正误差且输出已饱和时不接受新的积分，防止高延迟反馈造成 windup。 */
 	output_raw = heat_ctx.diag.p_term_raw + candidate_i_term_raw +
@@ -432,12 +405,9 @@ int heat_control_set_preheat_pid(const pid_params_t *pid)
 
 	k_mutex_lock(&heat_ctx.lock, K_FOREVER);
 	heat_ctx.preheat_pid = *pid;
-	if (heat_ctx.diag.phase == HEAT_CONTROL_PHASE_PB10_PREHEAT) {
-		heat_control_reset_pid_terms_locked();
-	}
 	k_mutex_unlock(&heat_ctx.lock);
 
-	LOG_INF("preheat pid updated kp=%d ki=%d kd=%d i_limit=%d",
+	LOG_INF("legacy preheat pid updated (not used by heat control) kp=%d ki=%d kd=%d i_limit=%d",
 		pid->kp_milli, pid->ki_milli, pid->kd_milli, pid->integral_limit_permille);
 	return 0;
 }

@@ -1,8 +1,5 @@
 #ifndef NEBULIZER_APP_CONFIG_H_
 #define NEBULIZER_APP_CONFIG_H_
-/*
-1、连续低温且温度高，要报警
-2、热敷模式下，每次开始治疗时，如果APP_HEAT_PREHEAT_TARGET_DECI_C没有到预热温度（持续给上位机发送一个命令，1代表预热中，0代表预热完成），不开启正式治疗，相当于增加一个预热阶段，到达预热温度以后自动开始治疗，给上位机发送0
 /* 默认治疗目标温度，单位 0.1C；420 表示 42.0C。 */
 #define APP_DEFAULT_TARGET_TEMP_DECI_C          420
 
@@ -40,9 +37,6 @@
 
 /* PB11 Outlet PID 计算周期，单位毫秒；出口温度变化慢，积分不跟随 20ms 控制任务累加。 */
 #define APP_HEAT_PID_PERIOD_MS                  2000U
-
-/* PB10 预热 PID 周期；PB10 反馈延迟大，避免随 20ms 控制任务快速积分。 */
-#define APP_HEAT_PREHEAT_PID_PERIOD_MS          5000U
 
 /* 安全检查任务周期，单位毫秒；越小代表保护响应越快。 */
 #define APP_SAFETY_PERIOD_MS                    50
@@ -157,8 +151,8 @@
 /* TRIAC_EN 功率控制窗口包含的时间片数量；12ms * 100 = 1200ms 完整功率窗口。 */
 #define APP_TRIAC_POWER_WINDOW_SLICES           100U
 
-/* PB11 Outlet PID 默认 Kp，按 milli 放大保存；20000 表示 20.000。 */
-#define APP_HEAT_PID_KP_DEFAULT_MILLI           20000
+/* PB11 Outlet PID 默认 Kp，按 milli 放大保存；10000 表示 10.000。 */
+#define APP_HEAT_PID_KP_DEFAULT_MILLI           10000
 
 /* PB11 Outlet PID 默认 Ki，按 milli 放大保存；当前 0 表示先关闭积分。 */
 #define APP_HEAT_PID_KI_DEFAULT_MILLI           0
@@ -169,26 +163,18 @@
 /* PB11 Outlet PID 默认积分限幅，单位 permille；400 表示积分项最多贡献 40% 输出。 */
 #define APP_HEAT_PID_I_LIMIT_DEFAULT            400
 
-/* PB10 预热目标温度；500 表示 50.0C。 */
-#define APP_HEAT_PREHEAT_TARGET_DECI_C          500
-
-/* PB11 距离出口目标不超过 2.0C 时，退出 PB10 预热并锁存进入 PB11 PID。 */
-#define APP_HEAT_OUTLET_PID_ENTRY_BAND_DECI_C   50
-
-/* PB10 预热 PID 默认参数；高延迟反馈先从 P 控制开始。 */
-#define APP_HEAT_PREHEAT_PID_KP_DEFAULT_MILLI   2000
+/*
+ * 兼容旧版上位机的预热 PID 参数；当前控制逻辑不再使用这组参数，
+ * 预热和出口闭环都只读取 PB11。
+ */
+#define APP_HEAT_PREHEAT_PID_KP_DEFAULT_MILLI   1000
 #define APP_HEAT_PREHEAT_PID_KI_DEFAULT_MILLI   0
 #define APP_HEAT_PREHEAT_PID_KD_DEFAULT_MILLI   0
 #define APP_HEAT_PREHEAT_PID_I_LIMIT_DEFAULT    0
 
-/* PB10 预热 PID 输出上限；800 表示 80%。 */
-#define APP_HEAT_PREHEAT_PID_OUTPUT_MAX_PERMILLE 800U
-
-/* PB10 距离目标不超过 5.0C 时才允许积分，抑制高延迟造成的积分饱和。 */
-#define APP_HEAT_PREHEAT_PID_I_ENABLE_BAND_DECI_C 50
-
-/* 切换到 PB11 PID 后，输出上限在 10 秒内从 0 平滑增加到 A。 */
-#define APP_HEAT_PID_HANDOFF_RAMP_MS            10000U
+/* PB11 低于 30.0C 时使用固定满功率；达到该温度后切换到 PB11 PID。 */
+#define APP_HEAT_FULL_POWER_BELOW_DECI_C        300
+#define APP_HEAT_FULL_POWER_PERMILLE            1000U
 
 /* PA5 最高温停热阈值；1100 表示 110.0C，达到后只停热、不报故障。 */
 #define APP_HEAT_PA5_STOP_DECI_C                1100
@@ -197,14 +183,14 @@
 #define APP_HEAT_PID_OUTPUT_MAX_PERMILLE        200U
 
 /* B：PB11 加热 PID 阶段的 PA5 停热温度，单位 0.1C；默认 1000 表示 100.0C。 */
-#define APP_HEAT_PID_PA5_STOP_DECI_C            100
+#define APP_HEAT_PID_PA5_STOP_DECI_C            1000
 
 #if (APP_HEAT_PID_OUTPUT_MAX_PERMILLE > 1000U)
 #error "heat PID output limit must be in the range 0..1000 permille"
 #endif
 
-#if (APP_HEAT_PREHEAT_PID_OUTPUT_MAX_PERMILLE > 1000U)
-#error "preheat PID output limit must be in the range 0..1000 permille"
+#if (APP_HEAT_FULL_POWER_PERMILLE > 1000U)
+#error "heat full-power output must be in the range 0..1000 permille"
 #endif
 
 #if (APP_HEAT_PID_PA5_STOP_DECI_C > APP_HEAT_PA5_STOP_DECI_C)

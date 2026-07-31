@@ -264,15 +264,28 @@ struct safety_result safety_service_poll(void)
 	if (cover.changed) {
 		if (!cover.closed) {
 			LOG_WRN("cover open");
-			if ((status.state == TREATMENT_STATE_RUNNING_HOT) ||
-			    (status.state == TREATMENT_STATE_RUNNING_COLD)) {
-				safety_service_cover_set_pause_latched(true);
-				safety_service_enter_safe_state(FAULT_NONE);
-				result.pause_requested = true;
-				return result;
-			}
 		} else {
 			LOG_INF("cover closed");
+		}
+	}
+
+	/*
+	 * 盖子联锁必须按稳定电平持续生效，不能只依赖一次 changed 边沿。
+	 * AppTask 通过消息队列异步切换到 PAUSED；在状态切换完成前，控制任务仍可能
+	 * 看到 RUNNING 并重新启动执行器。因此盖子打开期间持续强制安全停机，并在
+	 * 状态仍为 RUNNING 时重复请求暂停，队列短暂满时也不会丢失联锁。
+	 */
+	if (!cover.closed) {
+		if ((status.state == TREATMENT_STATE_RUNNING_HOT) ||
+		    (status.state == TREATMENT_STATE_RUNNING_COLD)) {
+			safety_service_cover_set_pause_latched(true);
+			safety_service_enter_safe_state(FAULT_NONE);
+			result.pause_requested = true;
+			return result;
+		}
+
+		if (cover.pause_latched) {
+			safety_service_enter_safe_state(FAULT_NONE);
 		}
 	}
 
@@ -371,7 +384,8 @@ struct safety_result safety_service_poll(void)
 		    (status.state == TREATMENT_STATE_PAUSED) &&
 		    (status.fault == FAULT_NONE) &&
 		    status.mist.online &&
-		    status.sensors.cover_closed) {
+		    cover.closed &&
+		    !cover.pause_latched) {
 			safety_cover_state.mist_low_water_pause_latched = false;
 			k_mutex_unlock(&safety_cover_state.lock);
 			LOG_INF("mist water restored, resuming treatment");

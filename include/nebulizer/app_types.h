@@ -80,7 +80,7 @@ typedef struct {
 
 typedef enum {
 	HEAT_CONTROL_PHASE_IDLE = 0,
-	HEAT_CONTROL_PHASE_PB10_PREHEAT,
+	HEAT_CONTROL_PHASE_PB11_FULL_POWER,
 	HEAT_CONTROL_PHASE_PB11_OUTLET,
 } heat_control_phase_t;
 

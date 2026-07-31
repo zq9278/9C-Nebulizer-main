@@ -44,7 +44,7 @@ Do not run `serial_client.py` directly. It is a library module used by `app.py`.
 
 - USART1 live monitoring
 - treatment control
-- independent PB10 preheat PID, PB11 outlet PID, and outlet-temperature fan PID tuning
+- PB11 heater PID and outlet-temperature fan PID tuning; below 30C the heater uses fixed full power
 - maintenance mode manual fan/mist/heat control
 - fault history
 - outlet/kettle/target temperature trend

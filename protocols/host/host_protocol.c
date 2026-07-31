@@ -145,8 +145,8 @@ int host_protocol_encode_preheat_pid(uint16_t frame_id, const pid_params_t *pid,
 	host_put_le32(&payload[4], (uint32_t)pid->ki_milli);
 	host_put_le32(&payload[8], (uint32_t)pid->kd_milli);
 	host_put_le32(&payload[12], (uint32_t)pid->integral_limit_permille);
-	host_put_le16(&payload[16], APP_HEAT_PREHEAT_TARGET_DECI_C);
-	host_put_le16(&payload[18], APP_HEAT_PREHEAT_PID_OUTPUT_MAX_PERMILLE);
+	host_put_le16(&payload[16], APP_HEAT_FULL_POWER_BELOW_DECI_C);
+	host_put_le16(&payload[18], APP_HEAT_FULL_POWER_PERMILLE);
 
 	return frame_codec_encode(frame_id, HOST_FRAME_TYPE_PREHEAT_PID, payload,
 				  sizeof(payload), out, out_size, encoded_len);
@@ -185,8 +185,7 @@ int host_protocol_encode_runtime(uint16_t frame_id, const telemetry_status_t *st
 		return -EINVAL;
 	}
 
-	runtime_pid = (status->heat_diag.phase == HEAT_CONTROL_PHASE_PB10_PREHEAT) ?
-		      &status->preheat_pid : &status->heat_pid;
+	runtime_pid = &status->heat_pid;
 
 	payload[0] = (uint8_t)status->state;
 	host_put_le32(&payload[1], status->remaining_sec);

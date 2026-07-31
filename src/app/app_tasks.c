@@ -659,6 +659,23 @@ static void app_run_control_phase(void)
 		return;
 	}
 
+	/*
+	 * 使用最新的原始盖子电平做控制输出的最终联锁。安全服务负责 100 ms 防抖和
+	 * 状态机暂停；这里负责堵住防抖完成、暂停事件入队和 AppTask 处理之间的窗口，
+	 * 防止同一控制周期把刚停止的风机、雾化或加热重新启动。
+	 */
+	if (!status.sensors.cover_closed &&
+	    ((status.state == TREATMENT_STATE_RUNNING_HOT) ||
+	     (status.state == TREATMENT_STATE_RUNNING_COLD) ||
+	     (status.state == TREATMENT_STATE_PAUSED))) {
+		safety_service_enter_safe_state(FAULT_NONE);
+		heat_control_get_diag(&heat_diag);
+		app_context_set_heat_diag(&heat_diag);
+		fan_control_get_diag(&fan_diag);
+		app_context_set_fan_diag(&fan_diag);
+		return;
+	}
+
 	if (status.maintenance.active) {
 		app_maintenance_apply_outputs();
 		heat_control_get_diag(&heat_diag);
@@ -730,6 +747,7 @@ static void app_run_control_phase(void)
 		app_context_set_heat_diag(&heat_diag);
 		mist_service_set_desired(false, MIST_LEVEL_UI_OFF);
 		if ((status.state == TREATMENT_STATE_READY) ||
+		    (status.state == TREATMENT_STATE_PAUSED) ||
 		    (status.state == TREATMENT_STATE_DONE) ||
 		    (status.state == TREATMENT_STATE_FAULT)) {
 			fan_control_stop();

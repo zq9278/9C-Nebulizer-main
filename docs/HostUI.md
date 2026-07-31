@@ -11,7 +11,7 @@ The design goal is to let a maintenance engineer or manufacturing tool:
 - monitor treatment state, fault state, temperatures, fan, mist board, cover, liquid level
 - send all main treatment control commands
 - read and write treatment parameters
-- tune the independent PB10 preheat PID and PB11 outlet PID online
+- tune the PB11 outlet PID online and observe the PB11 below-30C full-power phase
 - tune the independent PB11 outlet-temperature fan PID online
 - observe protocol ACK/NACK, heartbeat, and communication exceptions
 
@@ -200,7 +200,7 @@ Runtime frame:
   - fan PID enabled/saturated flags
   - fan PID base/final PWM percent
   - fan PID boost, PB11 error, measured temperature, target, and integral term
-  - `heat_control_phase`: `0=IDLE`, `1=PB10 PREHEAT PID`, `2=PB11 OUTLET PID`
+  - `heat_control_phase`: `0=IDLE`, `1=PB11 FULL POWER`, `2=PB11 OUTLET PID`
 
 Maintenance frame:
 
@@ -227,24 +227,21 @@ This keeps the UI responsive without flooding `USART1`.
 
 ## Temperature Tuning Path
 
-The host UI provides two sequential heater-control tuning paths. PB10 first regulates to
-the fixed 55C preheat target. When PB11 is within 2C of the outlet target, control latches
-to PB11 using `OutletTarget - PB11 OutletTemp`.
+The heater uses PB11 for both phases. Below 30C it runs at fixed 100% output. At 30C and
+above it switches directly to PID using `OutletTarget - PB11 OutletTemp`.
 
 ## PID Tuning Path
 
-Current firmware exposes two independent fixed-point heater PID controllers. PB10 preheat
-uses `55C - PB10`, defaults to P-only control, disables integral outside the final 5C band,
-and applies saturation anti-windup. After the one-way handoff, PB11 owns heater output and
-its output ceiling ramps to the configured limit over 10 seconds.
+Current firmware uses one fixed-point PB11 heater PID with saturation anti-windup. The old
+preheat PID protocol fields are retained only for compatibility and do not control output.
 
 Host workflow:
 
 1. Connect to `USART1`
-2. Read both PIDs via `HOST_CMD_GET_PREHEAT_PID` and `HOST_CMD_GET_PID`
+2. Read the active PID via `HOST_CMD_GET_PID`
 3. Display `Kp/Ki/Kd` as `value / 1000.0`
 4. Let the engineer edit values online
-5. Send `HOST_CMD_SET_PREHEAT_PID` or `HOST_CMD_SET_PID`
+5. Send `HOST_CMD_SET_PID`
 6. Wait for ACK and updated PID frame
 7. Observe runtime frame values:
    - heat enable

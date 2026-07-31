@@ -124,7 +124,7 @@ class MainWindow(QMainWindow):
         config_form.addRow(read_config_button, apply_config_button)
         config_form.addRow(button_grid)
 
-        preheat_pid_group = QGroupBox("Preheat PID Tuning (PB10 Feedback)")
+        preheat_pid_group = QGroupBox("Legacy Preheat PID (not used by heater)")
         preheat_pid_form = QFormLayout(preheat_pid_group)
         self.preheat_kp_box = QDoubleSpinBox()
         self.preheat_ki_box = QDoubleSpinBox()
@@ -150,8 +150,8 @@ class MainWindow(QMainWindow):
         preheat_pid_form.addRow("Ki", self.preheat_ki_box)
         preheat_pid_form.addRow("Kd", self.preheat_kd_box)
         preheat_pid_form.addRow("I Limit", self.preheat_i_limit_box)
-        preheat_pid_form.addRow("PB10 Target", self.preheat_target_label)
-        preheat_pid_form.addRow("Output Limit", self.preheat_output_limit_label)
+        preheat_pid_form.addRow("PB11 Switch Threshold", self.preheat_target_label)
+        preheat_pid_form.addRow("Fixed Output", self.preheat_output_limit_label)
         preheat_pid_form.addRow("Live", self.preheat_pid_live_label)
         preheat_pid_form.addRow(read_preheat_pid_button, apply_preheat_pid_button)
 
@@ -817,22 +817,21 @@ class MainWindow(QMainWindow):
         self.heat_label.setText(
             f"{'on' if runtime.heat_enabled else 'off'}, burst, {runtime.heat_output_permille} permille"
         )
-        phase_names = {0: "IDLE", 1: "PB10 PREHEAT PID", 2: "PB11 OUTLET PID"}
+        phase_names = {0: "IDLE", 1: "PB11 FULL POWER", 2: "PB11 OUTLET PID"}
         self.heat_phase_label.setText(
             phase_names.get(runtime.heat_control_phase, f"UNKNOWN {runtime.heat_control_phase}")
         )
         if runtime.heat_control_phase == 1:
             self.preheat_pid_live_label.setText(
-                f"PB10={runtime.measured_temp_deci_c / 10.0:.1f}C, "
-                f"target={runtime.target_temp_deci_c / 10.0:.1f}C, "
-                f"error={runtime.heat_error_deci_c / 10.0:.1f}C, "
-                f"output={runtime.heat_output_permille / 10.0:.1f}%"
+                f"PB11={runtime.measured_temp_deci_c / 10.0:.1f}C < "
+                f"{runtime.target_temp_deci_c / 10.0:.1f}C, "
+                f"fixed output={runtime.heat_output_permille / 10.0:.1f}%"
             )
-            self.outlet_pid_temp_label.setText("waiting for preheat")
+            self.outlet_pid_temp_label.setText("waiting for PB11 >= 30C")
             self.outlet_pid_target_label.setText("-")
             self.outlet_pid_error_label.setText("-")
         elif runtime.heat_control_phase == 2:
-            self.preheat_pid_live_label.setText("PB11 entered the 2.0C target band; outlet PID latched")
+            self.preheat_pid_live_label.setText("PB11 >= 30C; outlet PID active")
             self.outlet_pid_temp_label.setText(f"{runtime.measured_temp_deci_c / 10.0:.1f} C")
             self.outlet_pid_target_label.setText(f"{runtime.target_temp_deci_c / 10.0:.1f} C")
             self.outlet_pid_error_label.setText(f"{runtime.heat_error_deci_c / 10.0:.1f} C")
@@ -869,18 +868,12 @@ class MainWindow(QMainWindow):
 
         if runtime.state != 4:  # TREATMENT_STATE_RUNNING_HOT
             hint = "HOT treatment is not running; PID and staged heat outputs are inactive."
-        elif pa5_c >= 110.0:
-            hint = "PA5 >= 110C: heat is paused without raising a fault."
-        elif runtime.heat_control_phase == 1 and error_c > 5.0:
-            hint = (
-                "PB10 preheat PID is active. Integral is disabled outside the final 5C band; "
-                "tune Kp first because PB10 feedback is delayed."
-            )
+        elif runtime.heat_control_phase == 1 and pa5_c >= 110.0:
+            hint = "PB11 is below 30C, but PA5 >= 110C: full-power heating is paused."
+        elif runtime.heat_control_phase == 2 and pa5_c >= 100.0:
+            hint = "PB11 PID is active, but PA5 >= 100C: heating is paused."
         elif runtime.heat_control_phase == 1:
-            hint = (
-                "PB10 is near the 55C preheat target. Keep Ki small; control switches and "
-                "latches to PB11 when PB11 is within 2C of the outlet target."
-            )
+            hint = "PB11 is below 30C; the heater is running at fixed 100% output."
         elif error_c <= 0.0:
             hint = (
                 "Outlet reached or exceeded target. If overshoot repeats, reduce Kp first, "
