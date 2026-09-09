@@ -4,22 +4,19 @@
 
 #include <nebulizer/app_config.h>
 #include <platform/board_devices.h>
-#include <zephyr/drivers/gpio.h>
-#include <zephyr/kernel.h>
-#include <zephyr/logging/log.h>
-
-LOG_MODULE_REGISTER(triac_control, CONFIG_NEBULIZER_LOG_LEVEL);
+#include <platform/hardware.h>
+#include <platform/runtime.h>
+#include <platform/log.h>
 
 static const struct board_resources *res;
-static struct gpio_callback zcd_callback;
-static struct k_timer gate_pulse_timer;
-static struct k_spinlock triac_lock;
+static struct board_gpio_callback zcd_callback;
+
+
 static volatile bool triac_enabled;
 static volatile uint16_t triac_output_permille;
 static uint32_t triac_window_accumulator;
 static uint32_t last_zcd_cycle;
 
-#define TRIAC_MOC3063_MIN_PULSE_US 3000U
 #define TRIAC_ZCD_MIN_INTERVAL_US 5000U
 
 static int triac_control_set_input_supply(bool enabled)
@@ -30,15 +27,15 @@ static int triac_control_set_input_supply(bool enabled)
 	 * MOC3063 没有 LED 电流，自然不会触发主可控硅。
 	 */
 	if (enabled) {
-		return gpio_pin_configure_dt(&res->otp_reset, GPIO_OUTPUT_ACTIVE);
+		return board_gpio_configure(&res->otp_reset, GPIO_OUTPUT_ACTIVE);
 	}
 
-	return gpio_pin_configure_dt(&res->otp_reset, GPIO_INPUT);
+	return board_gpio_configure(&res->otp_reset, GPIO_INPUT);
 }
 
 static int triac_control_set_gate(bool enabled)
 {
-	return gpio_pin_set_dt(&res->triac.enable_gpio, enabled ? 1 : 0);
+	return board_gpio_set(&res->triac.enable_gpio, enabled ? 1 : 0);
 }
 
 static void triac_control_reset_window_locked(void)
@@ -77,20 +74,13 @@ static bool triac_control_next_half_cycle_on_locked(void)
 	return slot_on;
 }
 
-static void triac_control_gate_pulse_timer_handler(struct k_timer *timer)
-{
-	ARG_UNUSED(timer);
 
-	(void)triac_control_set_gate(false);
-}
-
-static void triac_control_zcd_handler(const struct device *port,
-				      struct gpio_callback *cb,
-				      gpio_port_pins_t pins)
+static void triac_control_zcd_handler(const struct board_device *port,
+				      struct board_gpio_callback *cb,
+				      uint32_t pins)
 {
-	k_spinlock_key_t key;
+	uint32_t key;
 	bool gate_on;
-	uint32_t pulse_width_us;
 	uint32_t now_cycle;
 	uint32_t elapsed_us;
 
@@ -98,13 +88,13 @@ static void triac_control_zcd_handler(const struct device *port,
 	ARG_UNUSED(cb);
 	ARG_UNUSED(pins);
 
-	key = k_spin_lock(&triac_lock);
+	key = runtime_irq_save();
 
-	now_cycle = k_cycle_get_32();
+	now_cycle = board_time_us();
 	if (last_zcd_cycle != 0U) {
-		elapsed_us = k_cyc_to_us_floor32(now_cycle - last_zcd_cycle);
+		elapsed_us = (uint32_t)(now_cycle - last_zcd_cycle);
 		if (elapsed_us < TRIAC_ZCD_MIN_INTERVAL_US) {
-			k_spin_unlock(&triac_lock, key);
+			runtime_irq_restore(key);
 			return;
 		}
 	}
@@ -116,7 +106,7 @@ static void triac_control_zcd_handler(const struct device *port,
 	} else {
 		gate_on = triac_control_next_half_cycle_on_locked();
 	}
-	k_spin_unlock(&triac_lock, key);
+	runtime_irq_restore(key);
 
 	if (gate_on) {
 		/*
@@ -128,11 +118,8 @@ static void triac_control_zcd_handler(const struct device *port,
 		 * 半周边界重新决策。这样 MOC3063 在自己的过零触发窗口内一定
 		 * 能看到输入 LED 电流，行为更接近普通过零 SSR 的输入控制。
 		 */
-		ARG_UNUSED(pulse_width_us);
-		k_timer_stop(&gate_pulse_timer);
 		(void)triac_control_set_gate(true);
 	} else {
-		k_timer_stop(&gate_pulse_timer);
 		(void)triac_control_set_gate(false);
 	}
 }
@@ -146,7 +133,7 @@ int triac_control_init(void)
 		return -ENODEV;
 	}
 
-	ret = gpio_pin_configure_dt(&res->triac.enable_gpio, GPIO_OUTPUT_INACTIVE);
+	ret = board_gpio_configure(&res->triac.enable_gpio, GPIO_OUTPUT_INACTIVE);
 	if (ret != 0) {
 		return ret;
 	}
@@ -156,7 +143,7 @@ int triac_control_init(void)
 		return ret;
 	}
 
-	ret = gpio_pin_configure_dt(&res->triac.zcd_gpio, GPIO_INPUT);
+	ret = board_gpio_configure(&res->triac.zcd_gpio, GPIO_INPUT);
 	if (ret != 0) {
 		return ret;
 	}
@@ -166,18 +153,16 @@ int triac_control_init(void)
 	last_zcd_cycle = 0U;
 	triac_control_reset_window_locked();
 
-	k_timer_init(&gate_pulse_timer, triac_control_gate_pulse_timer_handler, NULL);
-
-	gpio_init_callback(&zcd_callback, triac_control_zcd_handler,
+	board_gpio_callback_init(&zcd_callback, triac_control_zcd_handler,
 			   BIT(res->triac.zcd_gpio.pin));
-	ret = gpio_add_callback(res->triac.zcd_gpio.port, &zcd_callback);
+	ret = board_gpio_callback_add(res->triac.zcd_gpio.port, &zcd_callback);
 	if (ret != 0) {
 		return ret;
 	}
 
-	ret = gpio_pin_interrupt_configure_dt(&res->triac.zcd_gpio, GPIO_INT_EDGE_BOTH);
+	ret = board_gpio_interrupt_configure(&res->triac.zcd_gpio, GPIO_INT_EDGE_BOTH);
 	if (ret != 0) {
-		(void)gpio_remove_callback(res->triac.zcd_gpio.port, &zcd_callback);
+		(void)board_gpio_callback_remove(res->triac.zcd_gpio.port, &zcd_callback);
 		return ret;
 	}
 
@@ -186,19 +171,19 @@ int triac_control_init(void)
 
 int triac_control_set_output_permille(uint16_t output_permille)
 {
-	k_spinlock_key_t key;
+	uint32_t key;
 
 	if (output_permille > 1000U) {
 		return -EINVAL;
 	}
 
-	key = k_spin_lock(&triac_lock);
+	key = runtime_irq_save();
 	if (triac_output_permille != output_permille) {
 		triac_output_permille = output_permille;
 		last_zcd_cycle = 0U;
 		triac_control_reset_window_locked();
 	}
-	k_spin_unlock(&triac_lock, key);
+	runtime_irq_restore(key);
 
 	if (output_permille == 0U) {
 		(void)triac_control_set_gate(false);
@@ -209,7 +194,7 @@ int triac_control_set_output_permille(uint16_t output_permille)
 
 int triac_control_set_enabled(bool enabled)
 {
-	k_spinlock_key_t key;
+	uint32_t key;
 	bool was_enabled;
 	int ret;
 
@@ -220,7 +205,7 @@ int triac_control_set_enabled(bool enabled)
 		}
 	}
 
-	key = k_spin_lock(&triac_lock);
+	key = runtime_irq_save();
 	was_enabled = triac_enabled;
 	triac_enabled = enabled;
 	if (!enabled) {
@@ -228,14 +213,13 @@ int triac_control_set_enabled(bool enabled)
 		last_zcd_cycle = 0U;
 		triac_control_reset_window_locked();
 	}
-	k_spin_unlock(&triac_lock, key);
+	runtime_irq_restore(key);
 
 	if (enabled && !was_enabled) {
 		LOG_INF("triac enabled output=%u permille", triac_output_permille);
 	}
 
 	if (!enabled) {
-		k_timer_stop(&gate_pulse_timer);
 		(void)triac_control_set_gate(false);
 		(void)triac_control_set_input_supply(false);
 		LOG_INF("triac disabled");
@@ -246,16 +230,14 @@ int triac_control_set_enabled(bool enabled)
 
 int triac_control_stop(void)
 {
-	k_spinlock_key_t key;
+	uint32_t key;
 
-	key = k_spin_lock(&triac_lock);
+	key = runtime_irq_save();
 	triac_enabled = false;
 	triac_output_permille = 0U;
 	last_zcd_cycle = 0U;
 	triac_control_reset_window_locked();
-	k_spin_unlock(&triac_lock, key);
-
-	k_timer_stop(&gate_pulse_timer);
+	runtime_irq_restore(key);
 	(void)triac_control_set_gate(false);
 	(void)triac_control_set_input_supply(false);
 	return 0;

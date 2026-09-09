@@ -6,7 +6,7 @@ PyQt6 desktop application for Nebulizer mainboard monitoring and control through
 
 ```sh
 cd /Users/zq/project/Nebulizer/software/9C-Nebulizer-main/tools/nebulizer_host_pyqt
-/Users/zq/zephyrproject/.venv/bin/python -m pip install -r requirements.txt
+python3 -m pip install -r requirements.txt
 ```
 
 ## Run
@@ -14,7 +14,7 @@ cd /Users/zq/project/Nebulizer/software/9C-Nebulizer-main/tools/nebulizer_host_p
 Windows PowerShell:
 
 ```powershell
-cd D:\zephyrproject\9C-Nebulizer-main\tools
+cd <project>\tools
 .\run_host.ps1
 ```
 
@@ -28,7 +28,7 @@ Linux/macOS:
 
 ```sh
 cd /Users/zq/project/Nebulizer/software/9C-Nebulizer-main/tools/nebulizer_host_pyqt
-/Users/zq/zephyrproject/.venv/bin/python app.py
+python3 app.py
 ```
 
 Or use the launcher:

@@ -6,7 +6,7 @@
 #include <stdint.h>
 
 #include <nebulizer/app_types.h>
-#include <zephyr/kernel.h>
+#include <platform/runtime.h>
 
 struct mist_client_request {
 	uint8_t cmd_id;
@@ -17,7 +17,7 @@ struct mist_client_request {
 int mist_board_client_init(void);
 int mist_board_client_submit(const struct mist_client_request *req);
 int mist_board_client_trigger_otp_reset(void);
-void mist_board_client_process_rx(k_timeout_t timeout);
+void mist_board_client_process_rx(TickType_t timeout);
 void mist_board_client_process_timeouts(void);
 void mist_board_client_get_status(mist_board_status_t *status);
 

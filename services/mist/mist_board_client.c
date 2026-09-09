@@ -9,10 +9,8 @@
 #include <platform/board_devices.h>
 #include <protocols/common/ring_frame_parser.h>
 #include <protocols/mist/mist_protocol.h>
-#include <zephyr/kernel.h>
-#include <zephyr/logging/log.h>
-
-LOG_MODULE_REGISTER(mist_board_client, CONFIG_NEBULIZER_LOG_LEVEL);
+#include <platform/runtime.h>
+#include <platform/log.h>
 
 struct mist_pending_cmd {
 	bool active;
@@ -26,7 +24,7 @@ static struct uart_port mist_uart_port;
 static struct ring_frame_parser mist_parser;
 static struct mist_pending_cmd pending;
 static mist_board_status_t mist_status;
-static const struct gpio_dt_spec *otp_reset_gpio;
+static const struct board_gpio *otp_reset_gpio;
 static uint8_t mist_rx_storage[APP_MIST_RX_RING_SIZE];
 static uint8_t next_seq = 1U;
 
@@ -34,19 +32,19 @@ static int mist_board_client_run_otp_reset_sequence(void)
 {
 	int ret;
 
-	if ((otp_reset_gpio == NULL) || !device_is_ready(otp_reset_gpio->port)) {
+	if ((otp_reset_gpio == NULL) || !board_device_ready(otp_reset_gpio->port)) {
 		return -ENODEV;
 	}
 
-	ret = gpio_pin_configure_dt(otp_reset_gpio, GPIO_OUTPUT_ACTIVE);
+	ret = board_gpio_configure(otp_reset_gpio, GPIO_OUTPUT_ACTIVE);
 	if (ret != 0) {
 		LOG_ERR("otp reset gpio output configure failed: %d", ret);
 		return ret;
 	}
 
-	k_msleep(APP_OTP_RESET_HIGH_MS);
+	vTaskDelay(pdMS_TO_TICKS(APP_OTP_RESET_HIGH_MS));
 
-	ret = gpio_pin_configure_dt(otp_reset_gpio, GPIO_INPUT);
+	ret = board_gpio_configure(otp_reset_gpio, GPIO_INPUT);
 	if (ret != 0) {
 		LOG_ERR("otp reset gpio input configure failed: %d", ret);
 		return ret;
@@ -67,14 +65,14 @@ static int mist_board_client_send_now(const struct mist_client_request *req, uin
 		return ret;
 	}
 
-	return uart_port_send(&mist_uart_port, frame, frame_len, K_MSEC(50));
+	return uart_port_send(&mist_uart_port, frame, frame_len, pdMS_TO_TICKS(50));
 }
 
 static void mist_board_client_set_online(bool online)
 {
 	mist_status.online = online;
 	if (online) {
-		mist_status.last_seen_ms = k_uptime_get_32();
+		mist_status.last_seen_ms = runtime_now_ms();
 		mist_status.consecutive_failures = 0U;
 	}
 }
@@ -204,7 +202,7 @@ int mist_board_client_submit(const struct mist_client_request *req)
 	pending.request = *req;
 	pending.seq = next_seq++;
 	pending.retries_left = APP_MIST_CMD_RETRY_COUNT;
-	pending.deadline_ms = k_uptime_get_32() + APP_MIST_CMD_TIMEOUT_MS;
+	pending.deadline_ms = runtime_now_ms() + APP_MIST_CMD_TIMEOUT_MS;
 	mist_status.desired_level = (req->cmd_id == MIST_CMD_SET_LEVEL) ? req->payload[0] :
 				    mist_status.desired_level;
 
@@ -217,7 +215,7 @@ int mist_board_client_submit(const struct mist_client_request *req)
 	return 0;
 }
 
-void mist_board_client_process_rx(k_timeout_t timeout)
+void mist_board_client_process_rx(TickType_t timeout)
 {
 	uint8_t buf[64];
 	size_t rd;
@@ -237,7 +235,7 @@ void mist_board_client_process_rx(k_timeout_t timeout)
 void mist_board_client_process_timeouts(void)
 {
 	int ret;
-	uint32_t now_ms = k_uptime_get_32();
+	uint32_t now_ms = runtime_now_ms();
 
 	if (!pending.active) {
 		return;

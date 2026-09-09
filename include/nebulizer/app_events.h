@@ -20,6 +20,7 @@ typedef enum {
 	APP_EVT_FAULT_CLEAR,
 	APP_EVT_MIST_STATUS,
 	APP_EVT_HEARTBEAT_TIMEOUT,
+	APP_EVT_PREHEAT_READY,
 } app_event_type_t;
 
 typedef struct {

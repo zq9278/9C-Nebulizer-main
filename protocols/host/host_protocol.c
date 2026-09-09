@@ -62,7 +62,7 @@ int host_protocol_encode_ack(uint16_t frame_id, uint8_t cmd_id, bool ok,
 int host_protocol_encode_status(uint16_t frame_id, const telemetry_status_t *status,
 				uint8_t *out, size_t out_size, size_t *encoded_len)
 {
-	uint8_t payload[20];
+	uint8_t payload[21];
 
 	if (status == NULL) {
 		return -EINVAL;
@@ -88,6 +88,7 @@ int host_protocol_encode_status(uint16_t frame_id, const telemetry_status_t *sta
 	payload[17] = status->mist.running ? 1U : 0U;
 	payload[18] = status->heartbeat_ok ? 1U : 0U;
 	payload[19] = (uint8_t)status->config.mode;
+	payload[20] = status->config.keep_warm_enabled ? 1U : 0U;
 
 	return frame_codec_encode(frame_id, HOST_FRAME_TYPE_STATUS, payload, sizeof(payload),
 				  out, out_size, encoded_len);
@@ -96,7 +97,7 @@ int host_protocol_encode_status(uint16_t frame_id, const telemetry_status_t *sta
 int host_protocol_encode_config(uint16_t frame_id, const treatment_config_t *config,
 				uint8_t *out, size_t out_size, size_t *encoded_len)
 {
-	uint8_t payload[7];
+	uint8_t payload[8];
 
 	if (config == NULL) {
 		return -EINVAL;
@@ -107,6 +108,7 @@ int host_protocol_encode_config(uint16_t frame_id, const treatment_config_t *con
 	host_put_le16(&payload[3], config->duration_sec);
 	payload[5] = (uint8_t)config->air_level;
 	payload[6] = (uint8_t)config->mist_level;
+	payload[7] = config->keep_warm_enabled ? 1U : 0U;
 
 	return frame_codec_encode(frame_id, HOST_FRAME_TYPE_CONFIG, payload, sizeof(payload),
 				  out, out_size, encoded_len);
@@ -177,7 +179,7 @@ int host_protocol_encode_fan_pid(uint16_t frame_id, const pid_params_t *pid,
 int host_protocol_encode_runtime(uint16_t frame_id, const telemetry_status_t *status,
 				 uint8_t *out, size_t out_size, size_t *encoded_len)
 {
-	uint8_t payload[91] = { 0 };
+	uint8_t payload[92] = { 0 };
 	size_t payload_len = 46U;
 	const pid_params_t *runtime_pid;
 
@@ -240,7 +242,8 @@ int host_protocol_encode_runtime(uint16_t frame_id, const telemetry_status_t *st
 	host_put_le16(&payload[86], (uint16_t)status->fan_diag.target_temp_deci_c);
 	host_put_le16(&payload[88], (uint16_t)(status->fan_diag.i_term_raw / 1000));
 	payload[90] = (uint8_t)status->heat_diag.phase;
-	payload_len = 91U;
+	payload[91] = status->config.keep_warm_enabled ? 1U : 0U;
+	payload_len = 92U;
 
 	return frame_codec_encode(frame_id, HOST_FRAME_TYPE_RUNTIME, payload, payload_len,
 				  out, out_size, encoded_len);
@@ -261,5 +264,29 @@ int host_protocol_encode_maintenance(uint16_t frame_id, const maintenance_contro
 	host_put_le16(&payload[3], maintenance->heat_output_permille);
 
 	return frame_codec_encode(frame_id, HOST_FRAME_TYPE_MAINT, payload, sizeof(payload),
+				  out, out_size, encoded_len);
+}
+
+int host_protocol_encode_treatment_event(uint16_t frame_id, uint8_t event_id,
+					 const telemetry_status_t *status, uint8_t *out,
+					 size_t out_size, size_t *encoded_len)
+{
+	uint8_t payload[12];
+
+	if (status == NULL) {
+		return -EINVAL;
+	}
+
+	payload[0] = event_id;
+	payload[1] = (uint8_t)status->config.mode;
+	payload[2] = (uint8_t)status->state;
+	payload[3] = status->config.keep_warm_enabled ? 1U : 0U;
+	host_put_le32(&payload[4], status->remaining_sec);
+	host_put_le16(&payload[8],
+		      (uint16_t)status->sensors.ntc_deci_c[BOARD_NTC_OUTLET1]);
+	host_put_le16(&payload[10],
+		      (uint16_t)status->sensors.ntc_deci_c[BOARD_NTC_KETTLE]);
+
+	return frame_codec_encode(frame_id, HOST_FRAME_TYPE_EVENT, payload, sizeof(payload),
 				  out, out_size, encoded_len);
 }

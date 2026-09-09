@@ -26,5 +26,8 @@ int host_protocol_encode_runtime(uint16_t frame_id, const telemetry_status_t *st
 				 uint8_t *out, size_t out_size, size_t *encoded_len);
 int host_protocol_encode_maintenance(uint16_t frame_id, const maintenance_control_t *maintenance,
 				     uint8_t *out, size_t out_size, size_t *encoded_len);
+int host_protocol_encode_treatment_event(uint16_t frame_id, uint8_t event_id,
+					 const telemetry_status_t *status, uint8_t *out,
+					 size_t out_size, size_t *encoded_len);
 
 #endif /* PROTOCOLS_HOST_HOST_PROTOCOL_H_ */

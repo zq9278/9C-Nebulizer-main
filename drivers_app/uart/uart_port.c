@@ -1,122 +1,104 @@
 #include "uart_port.h"
-
-#include <errno.h>
-
-#include <zephyr/drivers/uart.h>
-#include <zephyr/logging/log.h>
-
-LOG_MODULE_REGISTER(uart_port, CONFIG_NEBULIZER_LOG_LEVEL);
-
-int uart_port_init(struct uart_port *port, const struct device *dev,
-		   uint8_t *rx_storage, size_t rx_storage_size,
-		   uart_port_rx_notify_t notify, void *notify_user_data)
+#include <limits.h>
+static struct uart_port *host_port, *mist_port;
+static USART_TypeDef *uart_regs(const struct uart_port *port)
 {
-	if ((port == NULL) || (dev == NULL) || (rx_storage == NULL)) {
-		return -EINVAL;
-	}
-
-	port->dev = dev;
-	port->notify = notify;
-	port->notify_user_data = notify_user_data;
-	port->tx_buf = NULL;
-	port->tx_len = 0;
-	port->tx_pos = 0;
-
-	uart_rx_ring_init(&port->rx_ring, rx_storage, rx_storage_size);
-	k_sem_init(&port->rx_sem, 0, UINT_MAX);
-	k_sem_init(&port->tx_done, 0, 1);
-	k_mutex_init(&port->tx_lock);
-
-	uart_irq_callback_user_data_set(dev, uart_port_isr, port);
-	uart_irq_rx_enable(dev);
-
-	return 0;
+    UART_HandleTypeDef *handle = port->dev->instance;
+    return handle->Instance;
 }
-
-int uart_port_send(struct uart_port *port, const uint8_t *data, size_t len,
-		   k_timeout_t timeout)
+int uart_port_init(struct uart_port *port, const struct board_device *dev,
+    uint8_t *storage, size_t size, uart_port_rx_notify_t notify, void *user_data)
 {
-	uint32_t tx_complete_deadline_ms;
-
-	if ((port == NULL) || (data == NULL) || (len == 0U)) {
-		return -EINVAL;
-	}
-
-	k_mutex_lock(&port->tx_lock, K_FOREVER);
-	port->tx_buf = data;
-	port->tx_len = len;
-	port->tx_pos = 0U;
-	k_sem_reset(&port->tx_done);
-
-	uart_irq_tx_enable(port->dev);
-	if (k_sem_take(&port->tx_done, timeout) != 0) {
-		uart_irq_tx_disable(port->dev);
-		port->tx_buf = NULL;
-		port->tx_len = 0U;
-		port->tx_pos = 0U;
-		k_mutex_unlock(&port->tx_lock);
-		LOG_WRN("uart tx timed out");
-		return -ETIMEDOUT;
-	}
-
-	tx_complete_deadline_ms = k_uptime_get_32() + 20U;
-	while (!uart_irq_tx_complete(port->dev)) {
-		if ((int32_t)(tx_complete_deadline_ms - k_uptime_get_32()) <= 0) {
-			LOG_WRN("uart tx complete wait timed out");
-			break;
-		}
-		k_busy_wait(100);
-	}
-
-	k_mutex_unlock(&port->tx_lock);
-	return 0;
+    if (!port || !board_device_ready(dev) || !storage || !size) return -EINVAL;
+    port->dev = dev;
+    port->notify = notify;
+    port->notify_user_data = user_data;
+    port->tx_buf = NULL;
+    port->tx_len = port->tx_pos = 0;
+    uart_rx_ring_init(&port->rx_ring, storage, size);
+    port->rx_sem = xSemaphoreCreateBinaryStatic(&port->rx_storage);
+    port->tx_done = xSemaphoreCreateBinaryStatic(&port->tx_storage);
+    port->tx_lock = xSemaphoreCreateMutexStatic(&port->lock_storage);
+    configASSERT(port->rx_sem && port->tx_done && port->tx_lock);
+    USART_TypeDef *uart = uart_regs(port);
+    IRQn_Type irq;
+    if (uart == USART1) { host_port = port; irq = USART1_IRQn; }
+    else if (uart == USART4) { mist_port = port; irq = USART3_4_IRQn; }
+    else return -EINVAL;
+    uart->ICR = USART_ICR_ORECF | USART_ICR_FECF | USART_ICR_NECF | USART_ICR_PECF;
+    uart->CR1 |= USART_CR1_RXNEIE_RXFNEIE;
+    uart->CR3 |= USART_CR3_EIE;
+    HAL_NVIC_SetPriority(irq, 2, 0);
+    HAL_NVIC_EnableIRQ(irq);
+    return 0;
 }
-
+int uart_port_send(struct uart_port *port, const uint8_t *data, size_t len, TickType_t timeout)
+{
+    if (!port || !data || !len) return -EINVAL;
+    TickType_t started = xTaskGetTickCount();
+    if (xSemaphoreTake(port->tx_lock, timeout) != pdPASS) return -ETIMEDOUT;
+    if (timeout != portMAX_DELAY) {
+        TickType_t elapsed = xTaskGetTickCount() - started;
+        timeout = elapsed < timeout ? timeout - elapsed : 0;
+    }
+    xSemaphoreTake(port->tx_done, 0);
+    USART_TypeDef *uart = uart_regs(port);
+    uint32_t key = runtime_irq_save();
+    port->tx_buf = data;
+    port->tx_len = len;
+    port->tx_pos = 0;
+    uart->ICR = USART_ICR_TCCF;
+    uart->CR1 |= USART_CR1_TXEIE_TXFNFIE;
+    runtime_irq_restore(key);
+    BaseType_t ok = xSemaphoreTake(port->tx_done, timeout);
+    key = runtime_irq_save();
+    uart->CR1 &= ~(USART_CR1_TXEIE_TXFNFIE | USART_CR1_TCIE);
+    port->tx_buf = NULL;
+    port->tx_len = port->tx_pos = 0;
+    runtime_irq_restore(key);
+    xSemaphoreGive(port->tx_lock);
+    return ok == pdPASS ? 0 : -ETIMEDOUT;
+}
 size_t uart_port_read(struct uart_port *port, uint8_t *data, size_t len)
 {
-	return uart_rx_ring_get(&port->rx_ring, data, len);
+    return uart_rx_ring_get(&port->rx_ring, data, len);
 }
-
-int uart_port_wait_rx(struct uart_port *port, k_timeout_t timeout)
+int uart_port_wait_rx(struct uart_port *port, TickType_t timeout)
 {
-	return k_sem_take(&port->rx_sem, timeout);
+    if (uart_rx_ring_size_get(&port->rx_ring)) return 0;
+    return xSemaphoreTake(port->rx_sem, timeout) == pdPASS ? 0 : -EAGAIN;
 }
-
-void uart_port_isr(const struct device *dev, void *user_data)
+static void uart_port_irq(struct uart_port *port)
 {
-	struct uart_port *port = user_data;
-
-	if (!uart_irq_update(dev)) {
-		return;
-	}
-
-	if (uart_irq_rx_ready(dev)) {
-		uint8_t buf[32];
-		int rx = uart_fifo_read(dev, buf, sizeof(buf));
-
-		if (rx > 0) {
-			uart_rx_ring_put(&port->rx_ring, buf, (size_t)rx);
-			k_sem_give(&port->rx_sem);
-			if (port->notify != NULL) {
-				port->notify(port->notify_user_data);
-			}
-		}
-	}
-
-	if (uart_irq_tx_ready(dev) && (port->tx_buf != NULL)) {
-		size_t remaining = port->tx_len - port->tx_pos;
-		int sent = uart_fifo_fill(dev, &port->tx_buf[port->tx_pos], remaining);
-
-		if (sent > 0) {
-			port->tx_pos += (size_t)sent;
-		}
-
-		if (port->tx_pos >= port->tx_len) {
-			uart_irq_tx_disable(dev);
-			port->tx_buf = NULL;
-			port->tx_len = 0U;
-			port->tx_pos = 0U;
-			k_sem_give(&port->tx_done);
-		}
-	}
+    if (!port) return;
+    USART_TypeDef *uart = uart_regs(port);
+    BaseType_t wake = pdFALSE;
+    uint32_t status = uart->ISR;
+    if (status & (USART_ISR_ORE | USART_ISR_FE | USART_ISR_NE | USART_ISR_PE)) {
+        port->rx_errors++;
+        uart->ICR = USART_ICR_ORECF | USART_ICR_FECF | USART_ICR_NECF | USART_ICR_PECF;
+    }
+    if (status & USART_ISR_RXNE_RXFNE) {
+        uint8_t byte = (uint8_t)uart->RDR;
+        if (uart_rx_ring_put(&port->rx_ring, &byte, 1) != 1) port->rx_overflows++;
+        xSemaphoreGiveFromISR(port->rx_sem, &wake);
+        if (port->notify) port->notify(port->notify_user_data);
+    }
+    if ((status & USART_ISR_TXE_TXFNF) && (uart->CR1 & USART_CR1_TXEIE_TXFNFIE) && port->tx_buf) {
+        uart->TDR = port->tx_buf[port->tx_pos++];
+        if (port->tx_pos == port->tx_len) {
+            uart->CR1 &= ~USART_CR1_TXEIE_TXFNFIE;
+            uart->CR1 |= USART_CR1_TCIE;
+        }
+    }
+    /* Read TC again after filling TDR; the old status may have contained TC. */
+    if ((uart->ISR & USART_ISR_TC) && (uart->CR1 & USART_CR1_TCIE)) {
+        uart->CR1 &= ~USART_CR1_TCIE;
+        uart->ICR = USART_ICR_TCCF;
+        port->tx_buf = NULL;
+        xSemaphoreGiveFromISR(port->tx_done, &wake);
+    }
+    portYIELD_FROM_ISR(wake);
 }
+void USART1_IRQHandler(void) { uart_port_irq(host_port); }
+void USART3_4_IRQHandler(void) { uart_port_irq(mist_port); }

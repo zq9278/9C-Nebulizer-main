@@ -1,9 +1,21 @@
 #include "treatment_sm.h"
 
+#include <nebulizer/app_config.h>
+#include <platform/board_ids.h>
+
 /* 判断一个状态是否属于真正的治疗运行态。 */
 static bool treatment_sm_running(treatment_state_t state)
 {
-	return (state == TREATMENT_STATE_RUNNING_HOT) || (state == TREATMENT_STATE_RUNNING_COLD);
+	return (state == TREATMENT_STATE_PREHEATING) ||
+	       (state == TREATMENT_STATE_RUNNING_HOT) ||
+	       (state == TREATMENT_STATE_RUNNING_COLD);
+}
+
+static treatment_state_t treatment_sm_hot_start_state(const telemetry_status_t *status)
+{
+	return (status->sensors.ntc_deci_c[BOARD_NTC_OUTLET1] <
+		APP_HEAT_FULL_POWER_BELOW_DECI_C) ?
+		TREATMENT_STATE_PREHEATING : TREATMENT_STATE_RUNNING_HOT;
 }
 
 /*
@@ -24,7 +36,7 @@ treatment_state_t treatment_sm_handle_event(treatment_state_t current,
 	switch (evt->type) {
 	case APP_EVT_START:
 		if ((current == TREATMENT_STATE_READY) || (current == TREATMENT_STATE_CONFIGURING) ||
-		    (current == TREATMENT_STATE_DONE)) {
+		    (current == TREATMENT_STATE_DONE) || (current == TREATMENT_STATE_KEEP_WARM)) {
 			if (!status->mist.online || (status->fault != FAULT_NONE) ||
 			    status->mist.low_water || status->mist.safety_locked ||
 			    !status->sensors.cover_closed) {
@@ -33,7 +45,7 @@ treatment_state_t treatment_sm_handle_event(treatment_state_t current,
 			}
 
 			return (status->config.mode == TREATMENT_MODE_HOT) ?
-				TREATMENT_STATE_RUNNING_HOT : TREATMENT_STATE_RUNNING_COLD;
+				treatment_sm_hot_start_state(status) : TREATMENT_STATE_RUNNING_COLD;
 		}
 		break;
 
@@ -58,7 +70,15 @@ treatment_state_t treatment_sm_handle_event(treatment_state_t current,
 		    !status->mist.safety_locked &&
 		    status->sensors.cover_closed) {
 			return (status->config.mode == TREATMENT_MODE_HOT) ?
-				TREATMENT_STATE_RUNNING_HOT : TREATMENT_STATE_RUNNING_COLD;
+				treatment_sm_hot_start_state(status) : TREATMENT_STATE_RUNNING_COLD;
+		}
+		break;
+
+	case APP_EVT_PREHEAT_READY:
+		if ((current == TREATMENT_STATE_PREHEATING) &&
+		    (status->sensors.ntc_deci_c[BOARD_NTC_OUTLET1] >=
+		     APP_HEAT_FULL_POWER_BELOW_DECI_C)) {
+			return TREATMENT_STATE_RUNNING_HOT;
 		}
 		break;
 
@@ -66,7 +86,7 @@ treatment_state_t treatment_sm_handle_event(treatment_state_t current,
 		return TREATMENT_STATE_FAULT;
 
 	case APP_EVT_FAULT_CLEAR:
-		if (current == TREATMENT_STATE_FAULT) {
+		if ((current == TREATMENT_STATE_FAULT) || (status->fault != FAULT_NONE)) {
 			return TREATMENT_STATE_READY;
 		}
 		break;

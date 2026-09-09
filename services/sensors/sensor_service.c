@@ -1,3 +1,4 @@
+#include <string.h>
 #include "sensor_service.h"
 
 #include <errno.h>
@@ -9,10 +10,8 @@
 #include <platform/board_devices.h>
 #include <services/sensors/gx1832_service.h>
 #include <services/sensors/sensor_snapshot.h>
-#include <zephyr/kernel.h>
-#include <zephyr/logging/log.h>
-
-LOG_MODULE_REGISTER(sensor_service, CONFIG_NEBULIZER_LOG_LEVEL);
+#include <platform/runtime.h>
+#include <platform/log.h>
 
 static const struct board_resources *res;
 static uint16_t ntc_filtered[BOARD_NTC_COUNT];
@@ -94,7 +93,7 @@ int sensor_service_sample(sensor_snapshot_t *snapshot)
 	}
 
 	memset(snapshot, 0, sizeof(*snapshot));
-	snapshot->sample_uptime_ms = k_uptime_get_32();
+	snapshot->sample_uptime_ms = runtime_now_ms();
 	snapshot->sequence = snapshot->sample_uptime_ms;
 	snapshot->ntc_raw_max = sample.raw_max;
 

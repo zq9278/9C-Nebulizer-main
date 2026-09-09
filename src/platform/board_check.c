@@ -1,9 +1,7 @@
 #include "board_check.h"
 
 #include <platform/board_devices.h>
-#include <zephyr/logging/log.h>
-
-LOG_MODULE_REGISTER(board_check, CONFIG_NEBULIZER_LOG_LEVEL);
+#include <platform/log.h>
 
 /*
  * 启动时执行关键设备检查。

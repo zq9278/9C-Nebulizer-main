@@ -279,11 +279,11 @@
     <section class="hero">
       <h1>9C Nebulizer 架构总览</h1>
       <p>
-        这是一个基于 Zephyr RTOS 和 STM32G070CBT6 的眼科雾化控制器项目。整体架构不是简单的“main + loop”，而是
+        这是一个基于 FreeRTOS 和 STM32G070CBT6 的眼科雾化控制器项目。整体架构不是简单的“main + loop”，而是
         一个围绕 <span class="code">app_context</span>、事件队列、状态机和多线程周期任务组织起来的嵌入式控制系统。
       </p>
       <div class="tag-row">
-        <span class="tag">Zephyr RTOS</span>
+        <span class="tag">FreeRTOS</span>
         <span class="tag">事件驱动状态机</span>
         <span class="tag">多线程周期控制</span>
         <span class="tag">板级抽象 + 驱动包装</span>
@@ -360,7 +360,7 @@
             <span>板级与设备适配层</span>
             <span class="pill">boards/ + src/platform/ + drivers_app/</span>
           </div>
-          <p>这里把 Zephyr 原生设备树、板级资源和应用驱动包装拼起来，让上层服务使用“业务友好接口”而不是直接操作设备句柄。</p>
+          <p>这里通过 STM32 HAL 初始化外设，由板级资源表和应用驱动向上层服务提供接口。当前任务、引脚与中断配置见 <a href="FreeRTOS.md">FreeRTOS 说明</a>。</p>
           <ul>
             <li><a href="../boards/arm/nebulizer_g070cbt6">boards/arm/nebulizer_g070cbt6/</a>: 自定义板定义。</li>
             <li><a href="../src/platform/board_devices.c">src/platform/board_devices.c</a>: 板资源映射和校验。</li>
@@ -399,7 +399,7 @@
 
     <section class="section">
       <h2>线程模型</h2>
-      <p>当前运行期不是一个 super loop，而是多个职责明确的 Zephyr 线程协作。</p>
+      <p>当前运行期不是一个 super loop，而是多个职责明确的 FreeRTOS 线程协作。</p>
       <div class="runtime-grid">
         <div class="thread-card">
           <div class="period">主控线程</div>

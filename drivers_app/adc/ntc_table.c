@@ -1,6 +1,6 @@
 #include "ntc_table.h"
 
-#include <zephyr/sys/util.h>
+#include <platform/util.h>
 
 static const struct ntc_table_entry ntc_table_default[] = {
 	{ -100, 58245 }, { -50, 44117 }, { 0, 33621 },   { 50, 25866 },

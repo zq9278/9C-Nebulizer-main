@@ -4,10 +4,9 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <zephyr/sys/ring_buffer.h>
-
 struct uart_rx_ring {
-	struct ring_buf rb;
+	volatile size_t head, tail;
+	volatile size_t used;
 	uint8_t *storage;
 	size_t storage_size;
 };

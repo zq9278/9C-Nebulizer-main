@@ -4,6 +4,7 @@
 
 #include <nebulizer/app_config.h>
 #include <nebulizer/protocol_ids.h>
+#include <platform/board_resources.h>
 #include <services/communication/host_comm_rx.h>
 #include <services/communication/host_comm_service.h>
 #include <services/communication/host_comm_tx.h>
@@ -18,10 +19,8 @@
 #include <src/safety/safety_service.h>
 #include <src/state_machine/treatment_sm.h>
 #include <src/telemetry/telemetry_service.h>
-#include <zephyr/kernel.h>
-#include <zephyr/logging/log.h>
-
-LOG_MODULE_REGISTER(app_tasks, CONFIG_NEBULIZER_LOG_LEVEL);
+#include <platform/runtime.h>
+#include <platform/log.h>
 
 #define HOST_ERR_STATE_REJECTED 0x40U
 #define HOST_ERR_OTP_RESET_FAILED 0x41U
@@ -30,24 +29,19 @@ LOG_MODULE_REGISTER(app_tasks, CONFIG_NEBULIZER_LOG_LEVEL);
 #define HOST_ERR_MIST_OFFLINE 0x44U
 #define HOST_ERR_MIST_SAFETY_LOCKED 0x45U
 
-/*
- * 线程栈统一在这里静态定义，便于集中观察 RTOS 资源占用。
- *
- * Zephyr 常见做法是：
- * - 用 K_THREAD_STACK_DEFINE 预留栈空间
- * - 用 struct k_thread 保存线程控制块
- * - 在 app_tasks_start() 里再真正创建线程
- */
-K_THREAD_STACK_DEFINE(app_task_stack, APP_TASK_STACK_SIZE);
-K_THREAD_STACK_DEFINE(host_rx_stack, APP_COMM_STACK_SIZE);
-K_THREAD_STACK_DEFINE(mist_stack, APP_COMM_STACK_SIZE);
-K_THREAD_STACK_DEFINE(supervisor_stack, APP_CONTROL_STACK_SIZE);
 
-static struct k_thread app_task_thread;
-static struct k_thread host_rx_thread;
-static struct k_thread mist_thread;
-static struct k_thread supervisor_thread;
+static StackType_t app_task_stack[APP_TASK_STACK_SIZE / sizeof(StackType_t)];
+static StackType_t host_rx_stack[APP_COMM_STACK_SIZE / sizeof(StackType_t)];
+static StackType_t mist_stack[APP_COMM_STACK_SIZE / sizeof(StackType_t)];
+static StackType_t supervisor_stack[APP_CONTROL_STACK_SIZE / sizeof(StackType_t)];
+
+static StaticTask_t app_task_thread;
+static StaticTask_t host_rx_thread;
+static StaticTask_t mist_thread;
+static StaticTask_t supervisor_thread;
 static maintenance_control_t maintenance_ctx;
+static bool treatment_official_started;
+static bool suppress_keep_warm_started_event;
 
 static void app_maintenance_apply_outputs(void);
 static void app_maintenance_stop_outputs(void);
@@ -57,6 +51,14 @@ static void app_run_sensor_phase(void);
 static void app_run_control_phase(void);
 static void app_run_safety_phase(void);
 static void app_run_telemetry_phase(void);
+
+static void app_send_treatment_event(uint8_t event_id)
+{
+	telemetry_status_t status;
+
+	app_context_get_status(&status);
+	(void)host_comm_service_send_treatment_event(event_id, &status);
+}
 
 /*
  * 按小端格式解析 16 位整数。
@@ -125,10 +127,13 @@ static bool app_parse_pid_params(const uint8_t *data, uint16_t len, pid_params_t
  */
 static void app_apply_state_transition(treatment_state_t state)
 {
+	treatment_state_t previous_state = app_context_get_state();
+
 	app_context_set_state(state);
 
 	switch (state) {
 	case TREATMENT_STATE_READY:
+		treatment_official_started = false;
 		maintenance_ctx.active = false;
 		app_maintenance_stop_outputs();
 		heat_control_stop();
@@ -143,6 +148,7 @@ static void app_apply_state_transition(treatment_state_t state)
 		break;
 
 	case TREATMENT_STATE_FAULT:
+		treatment_official_started = false;
 		maintenance_ctx.active = false;
 		app_maintenance_stop_outputs();
 		safety_service_enter_safe_state(app_context_get_fault());
@@ -154,11 +160,41 @@ static void app_apply_state_transition(treatment_state_t state)
 		safety_service_enter_safe_state(FAULT_NONE);
 		break;
 
+	case TREATMENT_STATE_KEEP_WARM:
+		maintenance_ctx.active = false;
+		fan_control_stop();
+		mist_service_request_stop();
+		heat_control_stop();
+		break;
+
 	default:
 		break;
 	}
 
 	app_publish_status_snapshot();
+
+	if ((previous_state == TREATMENT_STATE_KEEP_WARM) &&
+	    (state != TREATMENT_STATE_KEEP_WARM)) {
+		app_send_treatment_event(HOST_TREATMENT_EVT_KEEP_WARM_STOPPED);
+	}
+	if ((state == TREATMENT_STATE_KEEP_WARM) &&
+	    (previous_state != TREATMENT_STATE_KEEP_WARM) &&
+	    !suppress_keep_warm_started_event) {
+		app_send_treatment_event(HOST_TREATMENT_EVT_KEEP_WARM_STARTED);
+	}
+
+	if ((state == TREATMENT_STATE_PREHEATING) &&
+	    (previous_state != TREATMENT_STATE_PREHEATING)) {
+		app_send_treatment_event(HOST_TREATMENT_EVT_PREHEAT_STARTED);
+	}
+
+	if (((state == TREATMENT_STATE_RUNNING_HOT) ||
+	     (state == TREATMENT_STATE_RUNNING_COLD)) &&
+	    !treatment_official_started) {
+		treatment_official_started = true;
+		app_send_treatment_event(HOST_TREATMENT_EVT_STARTED);
+	}
+
 }
 
 /*
@@ -270,6 +306,12 @@ static void app_handle_host_command(const host_cmd_event_t *cmd)
 		app_context_set_config(&config);
 		app_context_set_remaining_sec(config.duration_sec);
 		(void)settings_store_save_delayed(&config);
+		if (config.keep_warm_enabled &&
+			   ((status.state == TREATMENT_STATE_READY) ||
+			    (status.state == TREATMENT_STATE_CONFIGURING) ||
+			    (status.state == TREATMENT_STATE_DONE))) {
+			app_apply_state_transition(TREATMENT_STATE_KEEP_WARM);
+		}
 		host_comm_service_send_ack(cmd->frame_id, cmd->command_id, true, 0U);
 		return;
 
@@ -322,9 +364,31 @@ static void app_handle_host_command(const host_cmd_event_t *cmd)
 		config.mist_level = (mist_level_t)cmd->data[0];
 		app_context_set_config(&config);
 		(void)settings_store_save_delayed(&config);
-		mist_service_set_desired(status.state == TREATMENT_STATE_RUNNING_HOT ||
+		mist_service_set_desired(status.state == TREATMENT_STATE_PREHEATING ||
+					 status.state == TREATMENT_STATE_RUNNING_HOT ||
 					 status.state == TREATMENT_STATE_RUNNING_COLD,
 					 config.mist_level);
+		host_comm_service_send_ack(cmd->frame_id, cmd->command_id, true, 0U);
+		return;
+
+	case HOST_CMD_SET_KEEP_WARM:
+		if ((cmd->data_len < 1U) || (cmd->data[0] > 1U)) {
+			error = 14U;
+			break;
+		}
+
+		config.keep_warm_enabled = cmd->data[0] != 0U;
+		app_context_set_config(&config);
+		(void)settings_store_save_delayed(&config);
+		if (config.keep_warm_enabled &&
+		    ((status.state == TREATMENT_STATE_READY) ||
+		     (status.state == TREATMENT_STATE_CONFIGURING) ||
+		     (status.state == TREATMENT_STATE_DONE))) {
+			app_apply_state_transition(TREATMENT_STATE_KEEP_WARM);
+		} else if (!config.keep_warm_enabled &&
+			   (status.state == TREATMENT_STATE_KEEP_WARM)) {
+			app_apply_state_transition(TREATMENT_STATE_READY);
+		}
 		host_comm_service_send_ack(cmd->frame_id, cmd->command_id, true, 0U);
 		return;
 
@@ -538,10 +602,21 @@ static void app_handle_host_command(const host_cmd_event_t *cmd)
 
 	if (sm_evt.type == APP_EVT_START) {
 		app_context_set_remaining_sec(status.config.duration_sec);
+		treatment_official_started = false;
+	}
+	if (sm_evt.type == APP_EVT_STOP) {
+		treatment_official_started = false;
+		if ((status.config.mode == TREATMENT_MODE_HOT) &&
+		    status.config.keep_warm_enabled) {
+			next_state = TREATMENT_STATE_KEEP_WARM;
+		}
+	}
+	if ((sm_evt.type == APP_EVT_FAULT_CLEAR) && status.config.keep_warm_enabled) {
+		next_state = TREATMENT_STATE_KEEP_WARM;
 	}
 
-	app_apply_state_transition(next_state);
 	host_comm_service_send_ack(cmd->frame_id, cmd->command_id, true, 0U);
+	app_apply_state_transition(next_state);
 }
 
 /*
@@ -554,20 +629,25 @@ static void app_handle_host_command(const host_cmd_event_t *cmd)
  *
  * 这种拆法的目的，是把“决策”和“执行”分开，避免多个线程同时改状态。
  */
-static void app_task_entry(void *a, void *b, void *c)
+static void app_task_entry(void *a)
 {
 	app_event_t evt;
+	treatment_config_t config;
 
 	ARG_UNUSED(a);
-	ARG_UNUSED(b);
-	ARG_UNUSED(c);
 
 	app_context_set_state(TREATMENT_STATE_SELF_TEST);
-	k_msleep(100);
-	app_context_set_state(TREATMENT_STATE_READY);
+	vTaskDelay(pdMS_TO_TICKS(100));
+	app_context_get_config(&config);
+	LOG_INF("boot config: keep_warm=%u mode=%u, next_state=%u",
+		config.keep_warm_enabled ? 1U : 0U, (uint8_t)config.mode,
+		config.keep_warm_enabled ? (uint8_t)TREATMENT_STATE_KEEP_WARM :
+					   (uint8_t)TREATMENT_STATE_READY);
+	app_apply_state_transition(config.keep_warm_enabled ?
+				   TREATMENT_STATE_KEEP_WARM : TREATMENT_STATE_READY);
 
 	while (true) {
-		if (app_event_wait(&evt, K_FOREVER) != 0) {
+		if (app_event_wait(&evt, portMAX_DELAY) != 0) {
 			continue;
 		}
 
@@ -586,12 +666,31 @@ static void app_task_entry(void *a, void *b, void *c)
 			break;
 
 		case APP_EVT_TREATMENT_DONE:
-			app_apply_state_transition(TREATMENT_STATE_DONE);
+		{
+			telemetry_status_t status;
+			bool keep_warm;
+
+			app_context_get_status(&status);
+			keep_warm = (status.config.mode == TREATMENT_MODE_HOT) &&
+				    status.config.keep_warm_enabled;
+			suppress_keep_warm_started_event = keep_warm;
+			app_apply_state_transition(keep_warm ? TREATMENT_STATE_KEEP_WARM :
+							      TREATMENT_STATE_DONE);
+			suppress_keep_warm_started_event = false;
+			if (treatment_official_started) {
+				app_send_treatment_event(HOST_TREATMENT_EVT_FINISHED);
+			}
+			treatment_official_started = false;
+			if (keep_warm) {
+				app_send_treatment_event(HOST_TREATMENT_EVT_KEEP_WARM_STARTED);
+			}
 			break;
+		}
 
 		case APP_EVT_HEARTBEAT_TIMEOUT:
 		case APP_EVT_PAUSE:
-		case APP_EVT_RESUME: {
+		case APP_EVT_RESUME:
+		case APP_EVT_PREHEAT_READY: {
 			telemetry_status_t status;
 			bool accepted;
 			treatment_state_t next;
@@ -640,11 +739,13 @@ static void app_run_control_phase(void)
 {
 	static uint32_t last_tick_ms;
 	static uint32_t subsec_ms;
+	static bool preheat_ready_pending;
+	static bool treatment_done_pending;
 	telemetry_status_t status;
 	fault_code_t heat_fault;
 	heat_control_diag_t heat_diag;
 	fan_control_diag_t fan_diag;
-	uint32_t now_ms = k_uptime_get_32();
+	uint32_t now_ms = runtime_now_ms();
 	uint32_t delta_ms = (last_tick_ms == 0U) ? APP_CONTROL_PERIOD_MS : (now_ms - last_tick_ms);
 
 	last_tick_ms = now_ms;
@@ -665,7 +766,8 @@ static void app_run_control_phase(void)
 	 * 防止同一控制周期把刚停止的风机、雾化或加热重新启动。
 	 */
 	if (!status.sensors.cover_closed &&
-	    ((status.state == TREATMENT_STATE_RUNNING_HOT) ||
+	    ((status.state == TREATMENT_STATE_PREHEATING) ||
+	     (status.state == TREATMENT_STATE_RUNNING_HOT) ||
 	     (status.state == TREATMENT_STATE_RUNNING_COLD) ||
 	     (status.state == TREATMENT_STATE_PAUSED))) {
 		safety_service_enter_safe_state(FAULT_NONE);
@@ -686,7 +788,36 @@ static void app_run_control_phase(void)
 	}
 
 	switch (status.state) {
+	case TREATMENT_STATE_PREHEATING:
+		subsec_ms = 0U;
+		treatment_done_pending = false;
+		fan_control_step(&status);
+		fan_control_get_diag(&fan_diag);
+		app_context_set_fan_diag(&fan_diag);
+		mist_service_set_desired(true, status.config.mist_level);
+		heat_fault = heat_control_step(&status);
+		heat_control_get_diag(&heat_diag);
+		app_context_set_heat_diag(&heat_diag);
+		if (heat_fault != FAULT_NONE) {
+			app_event_t evt = {
+				.type = APP_EVT_FAULT,
+				.data.fault = heat_fault,
+			};
+
+			(void)app_event_submit(&evt);
+		}
+		if ((status.sensors.ntc_deci_c[BOARD_NTC_OUTLET1] >=
+		     APP_HEAT_FULL_POWER_BELOW_DECI_C) && !preheat_ready_pending) {
+			app_event_t evt = { .type = APP_EVT_PREHEAT_READY };
+
+			if (app_event_submit(&evt) == 0) {
+				preheat_ready_pending = true;
+			}
+		}
+		break;
+
 	case TREATMENT_STATE_RUNNING_HOT:
+		preheat_ready_pending = false;
 		fan_control_step(&status);
 		fan_control_get_diag(&fan_diag);
 		app_context_set_fan_diag(&fan_diag);
@@ -711,13 +842,18 @@ static void app_run_control_phase(void)
 				remaining--;
 				app_context_set_remaining_sec(remaining);
 			}
-			if (remaining == 0U) {
-				app_submit_simple_event(APP_EVT_TREATMENT_DONE);
+			if ((remaining == 0U) && !treatment_done_pending) {
+				app_event_t evt = { .type = APP_EVT_TREATMENT_DONE };
+
+				if (app_event_submit(&evt) == 0) {
+					treatment_done_pending = true;
+				}
 			}
 		}
 		break;
 
 	case TREATMENT_STATE_RUNNING_COLD:
+		preheat_ready_pending = false;
 		fan_control_set_level(status.config.air_level);
 		fan_control_get_diag(&fan_diag);
 		app_context_set_fan_diag(&fan_diag);
@@ -734,13 +870,40 @@ static void app_run_control_phase(void)
 				remaining--;
 				app_context_set_remaining_sec(remaining);
 			}
-			if (remaining == 0U) {
-				app_submit_simple_event(APP_EVT_TREATMENT_DONE);
+			if ((remaining == 0U) && !treatment_done_pending) {
+				app_event_t evt = { .type = APP_EVT_TREATMENT_DONE };
+
+				if (app_event_submit(&evt) == 0) {
+					treatment_done_pending = true;
+				}
 			}
 		}
 		break;
 
+	case TREATMENT_STATE_KEEP_WARM:
+		preheat_ready_pending = false;
+		treatment_done_pending = false;
+		subsec_ms = 0U;
+		fan_control_stop();
+		fan_control_get_diag(&fan_diag);
+		app_context_set_fan_diag(&fan_diag);
+		mist_service_set_desired(false, MIST_LEVEL_UI_OFF);
+		heat_fault = heat_control_keep_warm_step(&status);
+		heat_control_get_diag(&heat_diag);
+		app_context_set_heat_diag(&heat_diag);
+		if (heat_fault != FAULT_NONE) {
+			app_event_t evt = {
+				.type = APP_EVT_FAULT,
+				.data.fault = heat_fault,
+			};
+
+			(void)app_event_submit(&evt);
+		}
+		break;
+
 	default:
+		preheat_ready_pending = false;
+		treatment_done_pending = false;
 		subsec_ms = 0U;
 		heat_control_stop();
 		heat_control_get_diag(&heat_diag);
@@ -803,11 +966,9 @@ static void app_run_telemetry_phase(void)
  * 雾化板使用独立协议和处理循环，因此仍保留单独线程。
  * app_tasks 这一层只负责把它拉起，不介入它的内部通信细节。
  */
-static void mist_task_entry(void *a, void *b, void *c)
+static void mist_task_entry(void *a)
 {
 	ARG_UNUSED(a);
-	ARG_UNUSED(b);
-	ARG_UNUSED(c);
 
 	mist_service_process_task();
 }
@@ -824,19 +985,18 @@ static void mist_task_entry(void *a, void *b, void *c)
  * 这样既保留了 RTOS 下的周期任务组织方式，又减少了线程数、栈占用和
  * app_context 的锁竞争，更适合当前这种“小而精”的控制系统。
  */
-static void control_supervisor_task_entry(void *a, void *b, void *c)
+static void control_supervisor_task_entry(void *a)
 {
+	TickType_t last_wake = xTaskGetTickCount();
 	uint32_t next_sensor_ms = 0U;
 	uint32_t next_control_ms = 0U;
 	uint32_t next_safety_ms = 0U;
 	uint32_t next_telemetry_ms = 0U;
 
 	ARG_UNUSED(a);
-	ARG_UNUSED(b);
-	ARG_UNUSED(c);
 
 	while (true) {
-		uint32_t now_ms = k_uptime_get_32();
+		uint32_t now_ms = runtime_now_ms();
 
 		if ((int32_t)(now_ms - next_safety_ms) >= 0) {
 			app_run_safety_phase();
@@ -858,7 +1018,7 @@ static void control_supervisor_task_entry(void *a, void *b, void *c)
 			next_telemetry_ms = now_ms + APP_TELEMETRY_PERIOD_MS;
 		}
 
-		k_msleep(10);
+		vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(10));
 	}
 }
 
@@ -872,24 +1032,21 @@ static void control_supervisor_task_entry(void *a, void *b, void *c)
  *
  * 线程名会出现在调试器、日志或线程分析工具中，建议始终保留。
  */
+static void host_task_entry(void *argument)
+{
+    (void)argument;
+    host_comm_rx_task();
+}
+
 int app_tasks_start(void)
 {
-	k_thread_create(&app_task_thread, app_task_stack, K_THREAD_STACK_SIZEOF(app_task_stack),
-			app_task_entry, NULL, NULL, NULL, 5, 0, K_NO_WAIT);
-	k_thread_name_set(&app_task_thread, "AppTask");
-
-	k_thread_create(&host_rx_thread, host_rx_stack, K_THREAD_STACK_SIZEOF(host_rx_stack),
-			(k_thread_entry_t)host_comm_rx_task, NULL, NULL, NULL, 6, 0, K_NO_WAIT);
-	k_thread_name_set(&host_rx_thread, "HostCommTask");
-
-	k_thread_create(&mist_thread, mist_stack, K_THREAD_STACK_SIZEOF(mist_stack),
-			mist_task_entry, NULL, NULL, NULL, 6, 0, K_NO_WAIT);
-	k_thread_name_set(&mist_thread, "MistCommTask");
-
-	k_thread_create(&supervisor_thread, supervisor_stack,
-			K_THREAD_STACK_SIZEOF(supervisor_stack),
-			control_supervisor_task_entry, NULL, NULL, NULL, 4, 0, K_NO_WAIT);
-	k_thread_name_set(&supervisor_thread, "ControlSupervisor");
-
-	return 0;
+    configASSERT(xTaskCreateStatic(app_task_entry, "AppTask", ARRAY_SIZE(app_task_stack),
+        NULL, 3, app_task_stack, &app_task_thread));
+    configASSERT(xTaskCreateStatic(host_task_entry, "HostComm", ARRAY_SIZE(host_rx_stack),
+        NULL, 2, host_rx_stack, &host_rx_thread));
+    configASSERT(xTaskCreateStatic(mist_task_entry, "MistComm", ARRAY_SIZE(mist_stack),
+        NULL, 2, mist_stack, &mist_thread));
+    configASSERT(xTaskCreateStatic(control_supervisor_task_entry, "Control", ARRAY_SIZE(supervisor_stack),
+        NULL, 4, supervisor_stack, &supervisor_thread));
+    return 0;
 }

@@ -4,8 +4,9 @@ import json
 import sys
 from dataclasses import asdict
 
-from PyQt6.QtCore import QDateTime, Qt
+from PyQt6.QtCore import QDateTime, QEvent, QTimer, Qt
 from PyQt6.QtWidgets import (
+    QAbstractSpinBox,
     QApplication,
     QCheckBox,
     QComboBox,
@@ -38,7 +39,9 @@ from models import (
     PreheatPidModel,
     RuntimeModel,
     StatusModel,
+    TreatmentEventModel,
 )
+from protocol import HostTreatmentEvent
 from serial_client import SerialClient
 from trend_widget import TrendWidget
 
@@ -47,6 +50,11 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.client = SerialClient()
+        self._keep_warm_timer = QTimer(self)
+        self._keep_warm_timer.setSingleShot(True)
+        self._keep_warm_timer.setInterval(2 * 60 * 60 * 1000)
+        self._keep_warm_timer.timeout.connect(self._finish_keep_warm_after_timeout)
+        self._keep_warm_timeout_sent = False
         self.last_fault_code = 0
         self.last_status: StatusModel | None = None
         self.config_dirty = False
@@ -62,6 +70,15 @@ class MainWindow(QMainWindow):
         self._bind_signals()
         self.refresh_ports()
         self._update_mode_dependent_controls()
+
+    def eventFilter(self, watched, event) -> bool:
+        """Prevent the mouse wheel from changing editable parameters accidentally."""
+        if event.type() == QEvent.Type.Wheel and isinstance(
+            watched, (QAbstractSpinBox, QComboBox, QSlider)
+        ):
+            event.ignore()
+            return True
+        return super().eventFilter(watched, event)
 
     def _build_ui(self) -> None:
         central = QWidget()
@@ -103,6 +120,7 @@ class MainWindow(QMainWindow):
         self.air_level_box.addItems(["OFF", "LOW", "MID", "HIGH"])
         self.mist_level_box = QComboBox()
         self.mist_level_box.addItems(["OFF", "LOW", "MID", "HIGH"])
+        self.keep_warm_checkbox = QCheckBox("Maintain PA5 at configured temperature")
         read_config_button = QPushButton("Read Config")
         apply_config_button = QPushButton("Apply Config")
         start_button = QPushButton("Start")
@@ -121,6 +139,7 @@ class MainWindow(QMainWindow):
         config_form.addRow("Duration", self.duration_box)
         config_form.addRow("Air Level", self.air_level_box)
         config_form.addRow("Mist Level", self.mist_level_box)
+        config_form.addRow("Keep Warm (HOT)", self.keep_warm_checkbox)
         config_form.addRow(read_config_button, apply_config_button)
         config_form.addRow(button_grid)
 
@@ -264,6 +283,7 @@ class MainWindow(QMainWindow):
         status_group = QGroupBox("Runtime Overview")
         status_form = QFormLayout(status_group)
         self.state_label = QLabel("-")
+        self.treatment_progress_label = QLabel("-")
         self.fault_label = QLabel("-")
         self.remaining_label = QLabel("-")
         self.heartbeat_label = QLabel("-")
@@ -283,6 +303,7 @@ class MainWindow(QMainWindow):
         self.maintenance_label = QLabel("-")
         for name, label in [
             ("State", self.state_label),
+            ("Treatment Progress", self.treatment_progress_label),
             ("Fault", self.fault_label),
             ("Remaining", self.remaining_label),
             ("Heartbeat", self.heartbeat_label),
@@ -438,6 +459,7 @@ class MainWindow(QMainWindow):
         self.client.fan_pid_updated.connect(self.update_fan_pid)
         self.client.runtime_updated.connect(self.update_runtime)
         self.client.maintenance_updated.connect(self.update_maintenance)
+        self.client.treatment_event_received.connect(self.handle_treatment_event)
 
         self.mode_box.currentIndexChanged.connect(self._mark_config_dirty)
         self.mode_box.currentIndexChanged.connect(self._update_mode_dependent_controls)
@@ -445,6 +467,7 @@ class MainWindow(QMainWindow):
         self.duration_box.valueChanged.connect(self._mark_config_dirty)
         self.air_level_box.currentIndexChanged.connect(self._mark_config_dirty)
         self.mist_level_box.currentIndexChanged.connect(self._mark_config_dirty)
+        self.keep_warm_checkbox.toggled.connect(self._mark_config_dirty)
         self.kp_box.valueChanged.connect(self._mark_pid_dirty)
         self.ki_box.valueChanged.connect(self._mark_pid_dirty)
         self.kd_box.valueChanged.connect(self._mark_pid_dirty)
@@ -535,6 +558,7 @@ class MainWindow(QMainWindow):
         self.client.set_time_minutes(self.duration_box.value())
         self.client.set_air_level(self.air_level_box.currentIndex())
         self.client.set_mist_level(self.mist_level_box.currentIndex())
+        self.client.set_keep_warm(self.keep_warm_checkbox.isChecked())
         self.config_dirty = False
         self._config_skip_logged = False
         if refresh_from_device:
@@ -551,6 +575,13 @@ class MainWindow(QMainWindow):
         hot_mode = self.mode_box.currentData() == 0
 
         self.target_temp_box.setEnabled(hot_mode)
+        self.keep_warm_checkbox.setEnabled(hot_mode)
+        if not hot_mode:
+            cancel_keep_warm = self.keep_warm_checkbox.isChecked()
+            self.keep_warm_checkbox.setChecked(False)
+            if cancel_keep_warm and not self._suppress_dirty_tracking and self.client.is_open():
+                self.append_log("COLD selected: disabling PA5 keep warm")
+                self.client.set_keep_warm(False)
         self.kp_box.setEnabled(hot_mode)
         self.ki_box.setEnabled(hot_mode)
         self.kd_box.setEnabled(hot_mode)
@@ -617,6 +648,7 @@ class MainWindow(QMainWindow):
             "duration_min": self.duration_box.value(),
             "air_level": self.air_level_box.currentIndex(),
             "mist_level": self.mist_level_box.currentIndex(),
+            "keep_warm_enabled": self.keep_warm_checkbox.isChecked(),
             "kp": self.kp_box.value(),
             "ki": self.ki_box.value(),
             "kd": self.kd_box.value(),
@@ -649,6 +681,8 @@ class MainWindow(QMainWindow):
         self.duration_box.setValue(payload.get("duration_min", self.duration_box.value()))
         self.air_level_box.setCurrentIndex(payload.get("air_level", self.air_level_box.currentIndex()))
         self.mist_level_box.setCurrentIndex(payload.get("mist_level", self.mist_level_box.currentIndex()))
+        self.keep_warm_checkbox.setChecked(bool(payload.get("keep_warm_enabled", False)))
+        self._update_mode_dependent_controls()
         self.kp_box.setValue(payload.get("kp", self.kp_box.value()))
         self.ki_box.setValue(payload.get("ki", self.ki_box.value()))
         self.kd_box.setValue(payload.get("kd", self.kd_box.value()))
@@ -682,6 +716,8 @@ class MainWindow(QMainWindow):
     def update_status(self, status: StatusModel) -> None:
         self.last_status = status
         self.state_label.setText(self.state_to_string(status.state))
+        self.treatment_progress_label.setText(self.treatment_progress_for_state(status.state))
+        self._sync_keep_warm_timer(status.state)
         self.fault_label.setText(self.fault_to_string(status.fault_code))
         self.remaining_label.setText(f"{status.remaining_sec} s")
         self.heartbeat_label.setText("YES" if status.heartbeat_ok else "NO")
@@ -719,9 +755,14 @@ class MainWindow(QMainWindow):
         self.duration_box.setValue(config.duration_sec // 60)
         self.air_level_box.setCurrentIndex(config.air_level)
         self.mist_level_box.setCurrentIndex(config.mist_level)
+        self.keep_warm_checkbox.setChecked(config.keep_warm_enabled)
+        self._update_mode_dependent_controls()
         self._suppress_dirty_tracking = False
         self.config_dirty = False
         self._config_skip_logged = False
+        if config.mode == 1 and config.keep_warm_enabled:
+            self.append_log("device reports COLD with keep warm enabled; sending cancellation")
+            self.client.set_keep_warm(False)
 
     def update_pid(self, pid: PidModel) -> None:
         if self.pid_dirty:
@@ -817,7 +858,12 @@ class MainWindow(QMainWindow):
         self.heat_label.setText(
             f"{'on' if runtime.heat_enabled else 'off'}, burst, {runtime.heat_output_permille} permille"
         )
-        phase_names = {0: "IDLE", 1: "PB11 FULL POWER", 2: "PB11 OUTLET PID"}
+        phase_names = {
+            0: "IDLE",
+            1: "PB11 FULL POWER",
+            2: "PB11 OUTLET PID",
+            3: "PA5 KEEP WARM",
+        }
         self.heat_phase_label.setText(
             phase_names.get(runtime.heat_control_phase, f"UNKNOWN {runtime.heat_control_phase}")
         )
@@ -833,6 +879,11 @@ class MainWindow(QMainWindow):
         elif runtime.heat_control_phase == 2:
             self.preheat_pid_live_label.setText("PB11 >= 30C; outlet PID active")
             self.outlet_pid_temp_label.setText(f"{runtime.measured_temp_deci_c / 10.0:.1f} C")
+            self.outlet_pid_target_label.setText(f"{runtime.target_temp_deci_c / 10.0:.1f} C")
+            self.outlet_pid_error_label.setText(f"{runtime.heat_error_deci_c / 10.0:.1f} C")
+        elif runtime.heat_control_phase == 3:
+            self.preheat_pid_live_label.setText("treatment complete; PA5 keep warm active")
+            self.outlet_pid_temp_label.setText(f"PA5 {runtime.measured_temp_deci_c / 10.0:.1f} C")
             self.outlet_pid_target_label.setText(f"{runtime.target_temp_deci_c / 10.0:.1f} C")
             self.outlet_pid_error_label.setText(f"{runtime.heat_error_deci_c / 10.0:.1f} C")
         else:
@@ -866,12 +917,14 @@ class MainWindow(QMainWindow):
         output_percent = runtime.heat_output_permille / 10.0
         integral_percent = runtime.pid_i_term_raw / 10000.0
 
-        if runtime.state != 4:  # TREATMENT_STATE_RUNNING_HOT
+        if runtime.state == 9:  # TREATMENT_STATE_PREHEATING
+            hint = "PREHEATING: PB11 has not reached 30C; treatment countdown is not running."
+        elif runtime.state == 10:  # TREATMENT_STATE_KEEP_WARM
+            hint = "KEEP WARM: PA5 is controlled to the configured firmware target."
+        elif runtime.state != 4:  # TREATMENT_STATE_RUNNING_HOT
             hint = "HOT treatment is not running; PID and staged heat outputs are inactive."
-        elif runtime.heat_control_phase == 1 and pa5_c >= 110.0:
-            hint = "PB11 is below 30C, but PA5 >= 110C: full-power heating is paused."
-        elif runtime.heat_control_phase == 2 and pa5_c >= 100.0:
-            hint = "PB11 PID is active, but PA5 >= 100C: heating is paused."
+        elif pa5_c >= 120.0:
+            hint = "PA5 >= 120C: heating is paused without raising a fault."
         elif runtime.heat_control_phase == 1:
             hint = "PB11 is below 30C; the heater is running at fixed 100% output."
         elif error_c <= 0.0:
@@ -904,10 +957,51 @@ class MainWindow(QMainWindow):
         self.manual_mist_box.setCurrentIndex(maintenance.mist_level)
         self.manual_heat_box.setValue(maintenance.heat_output_permille)
 
+    def handle_treatment_event(self, event: TreatmentEventModel) -> None:
+        event_text = {
+            HostTreatmentEvent.PREHEAT_STARTED: "PREHEATING / 预热中",
+            HostTreatmentEvent.TREATMENT_STARTED: "TREATMENT RUNNING / 正式治疗中",
+            HostTreatmentEvent.TREATMENT_FINISHED: "TREATMENT FINISHED / 治疗完成",
+            HostTreatmentEvent.KEEP_WARM_STARTED: "KEEP WARM / 保温中",
+            HostTreatmentEvent.KEEP_WARM_STOPPED: "KEEP WARM STOPPED / 保温结束",
+        }.get(event.event_id, f"UNKNOWN EVENT 0x{event.event_id:02X}")
+
+        self.treatment_progress_label.setText(event_text)
+        self.state_label.setText(self.state_to_string(event.state))
+        self.remaining_label.setText(f"{event.remaining_sec} s")
+        self._sync_keep_warm_timer(event.state)
+        self.append_log(
+            f"{event_text}: outlet={event.outlet_temp_deci_c / 10.0:.1f}C, "
+            f"PA5={event.kettle_temp_deci_c / 10.0:.1f}C, "
+            f"remaining={event.remaining_sec}s"
+        )
+
+    def _sync_keep_warm_timer(self, state: int) -> None:
+        if state == 10:
+            if not self._keep_warm_timer.isActive() and not self._keep_warm_timeout_sent:
+                self._keep_warm_timer.start()
+                self.append_log("keep-warm timer started: automatic stop in 2 hours")
+            return
+
+        if self._keep_warm_timer.isActive():
+            self._keep_warm_timer.stop()
+        self._keep_warm_timeout_sent = False
+
+    def _finish_keep_warm_after_timeout(self) -> None:
+        self._keep_warm_timeout_sent = True
+        self.keep_warm_checkbox.setChecked(False)
+        if self.client.is_open():
+            self.append_log("keep-warm reached 2 hours; sending SET_KEEP_WARM(0)")
+            self.client.set_keep_warm(False)
+        else:
+            self.append_log("keep-warm reached 2 hours, but host is disconnected")
+
     def update_connection_state(self, connected: bool) -> None:
         self.connection_state.setText("Connected" if connected else "Disconnected")
         self.connect_button.setText("Disconnect" if connected else "Connect")
         if not connected:
+            self._keep_warm_timer.stop()
+            self._keep_warm_timeout_sent = False
             self.last_status = None
             self.trend_widget.clear_samples()
             self.config_dirty = False
@@ -942,6 +1036,10 @@ class MainWindow(QMainWindow):
     def handle_ack(self, command_id: int, ok: bool, error_code: int) -> None:
         command_name = self.command_to_string(command_id)
         if ok:
+            if command_id == 0x15:  # SET_KEEP_WARM
+                self.append_log(f"{command_name} applied")
+                return
+
             if command_id == 0x29:  # SET_PID
                 self.append_log(f"{command_name} applied")
                 self.client.request_pid()
@@ -1010,8 +1108,23 @@ class MainWindow(QMainWindow):
             6: "PAUSED",
             7: "DONE",
             8: "FAULT",
+            9: "PREHEATING",
+            10: "KEEP_WARM",
         }
         return names.get(state, "UNKNOWN")
+
+    @staticmethod
+    def treatment_progress_for_state(state: int) -> str:
+        names = {
+            4: "TREATMENT RUNNING / 热雾治疗中",
+            5: "TREATMENT RUNNING / 冷雾治疗中",
+            6: "PAUSED / 治疗暂停",
+            7: "TREATMENT FINISHED / 治疗完成",
+            8: "FAULT / 故障",
+            9: "PREHEATING / 预热中（未倒计时）",
+            10: "KEEP WARM / PA5 持续保温中",
+        }
+        return names.get(state, "IDLE / 未治疗")
 
     @staticmethod
     def level_to_string(level: int) -> str:
@@ -1039,7 +1152,6 @@ class MainWindow(QMainWindow):
             15: "15 STORAGE_ERROR",
             16: "16 OUTLET1_OVER_TEMP",
             17: "17 KETTLE_OVER_TEMP",
-            18: "18 PIPE_WATER / 管道有水，暂停治疗",
         }
         return names.get(fault, f"{fault} UNKNOWN")
 
@@ -1051,6 +1163,7 @@ class MainWindow(QMainWindow):
             0x12: "SET_TIME",
             0x13: "SET_AIR_LEVEL",
             0x14: "SET_MIST_LEVEL",
+            0x15: "SET_KEEP_WARM",
             0x20: "START",
             0x21: "PAUSE",
             0x22: "RESUME",
@@ -1090,6 +1203,7 @@ class MainWindow(QMainWindow):
             11: "resume blocked while maintenance mode is active",
             12: "invalid fan PID payload or fan PID rejected",
             13: "invalid PB10 preheat PID payload or preheat PID rejected",
+            14: "invalid keep-warm value; expected 0 or 1",
             0x40: "state machine rejected this command in the current state",
             0x42: "cover is open, start is blocked",
             0x43: "mist board reports low water, start is blocked",
@@ -1111,6 +1225,7 @@ class MainWindow(QMainWindow):
 def main() -> int:
     app = QApplication(sys.argv)
     window = MainWindow()
+    app.installEventFilter(window)
     window.show()
     return app.exec()
 

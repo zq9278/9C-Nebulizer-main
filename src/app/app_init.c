@@ -11,9 +11,7 @@
 #include <src/platform/board_check.h>
 #include <src/safety/safety_service.h>
 #include <src/telemetry/telemetry_service.h>
-#include <zephyr/logging/log.h>
-
-LOG_MODULE_REGISTER(app_init, CONFIG_NEBULIZER_LOG_LEVEL);
+#include <platform/log.h>
 
 /*
  * 应用初始化顺序刻意保持为“上下文 -> 板级检查 -> 配置恢复 -> 外设服务 -> 安全/遥测”。

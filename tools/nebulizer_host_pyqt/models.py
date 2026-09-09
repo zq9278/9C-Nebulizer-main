@@ -21,6 +21,7 @@ class StatusModel:
     mist_running: bool = False
     heartbeat_ok: bool = False
     mode: int = 0
+    keep_warm_enabled: bool = False
 
 
 @dataclass
@@ -30,6 +31,18 @@ class ConfigModel:
     duration_sec: int = 600
     air_level: int = 2
     mist_level: int = 2
+    keep_warm_enabled: bool = False
+
+
+@dataclass
+class TreatmentEventModel:
+    event_id: int = 0
+    mode: int = 0
+    state: int = 0
+    keep_warm_enabled: bool = False
+    remaining_sec: int = 0
+    outlet_temp_deci_c: int = 0
+    kettle_temp_deci_c: int = 0
 
 
 @dataclass
@@ -109,6 +122,7 @@ class RuntimeModel:
     fan_pid_target_temp_deci_c: int = 0
     fan_pid_i_term_permille: int = 0
     heat_control_phase: int = 0
+    keep_warm_enabled: bool = False
 
 
 @dataclass

@@ -14,10 +14,8 @@
 #include <services/fan/fan_control.h>
 #include <src/app/app_context.h>
 #include <src/app/app_events.h>
-#include <zephyr/kernel.h>
-#include <zephyr/logging/log.h>
-
-LOG_MODULE_REGISTER(host_comm_service, CONFIG_NEBULIZER_LOG_LEVEL);
+#include <platform/runtime.h>
+#include <platform/log.h>
 
 #define HOST_ERR_BUSY 0x7EU
 
@@ -84,7 +82,7 @@ static bool host_comm_service_handle_readonly_cmd(const host_cmd_event_t *cmd)
 
 static void host_comm_service_log_event_queue_full(void)
 {
-	uint32_t now_ms = k_uptime_get_32();
+	uint32_t now_ms = runtime_now_ms();
 
 	if ((now_ms - event_queue_full_last_log_ms) >= 1000U) {
 		event_queue_full_last_log_ms = now_ms;
@@ -136,7 +134,7 @@ int host_comm_service_init(void)
 	return host_comm_tx_init();
 }
 
-int host_comm_service_process_rx(k_timeout_t timeout)
+int host_comm_service_process_rx(TickType_t timeout)
 {
 	uint8_t buf[64];
 	size_t rd;
@@ -269,7 +267,23 @@ int host_comm_service_send_maintenance(const maintenance_control_t *maintenance)
 	return host_comm_tx_enqueue(frame, frame_len);
 }
 
+int host_comm_service_send_treatment_event(uint8_t event_id,
+					   const telemetry_status_t *status)
+{
+	uint8_t frame[FRAME_CODEC_MAX_FRAME];
+	size_t frame_len;
+	int ret;
+
+	ret = host_protocol_encode_treatment_event(status_frame_id++, event_id, status,
+						   frame, sizeof(frame), &frame_len);
+	if (ret != 0) {
+		return ret;
+	}
+
+	return host_comm_tx_enqueue(frame, frame_len);
+}
+
 int host_comm_service_send_raw(const uint8_t *data, size_t len)
 {
-	return uart_port_send(&host_uart_port, data, len, K_MSEC(100));
+	return uart_port_send(&host_uart_port, data, len, pdMS_TO_TICKS(100));
 }

@@ -2,30 +2,32 @@
 
 #include <string.h>
 
-#include <zephyr/kernel.h>
+#include <platform/runtime.h>
 
 static struct {
-	struct k_mutex lock;
+	StaticSemaphore_t lock_storage;
+	SemaphoreHandle_t lock;
 	sensor_snapshot_t snapshot;
 } sensor_cache;
 
 int sensor_snapshot_init(void)
 {
-	k_mutex_init(&sensor_cache.lock);
+	sensor_cache.lock = xSemaphoreCreateMutexStatic(&sensor_cache.lock_storage);
+	configASSERT(sensor_cache.lock != NULL);
 	memset(&sensor_cache.snapshot, 0, sizeof(sensor_cache.snapshot));
 	return 0;
 }
 
 void sensor_snapshot_publish(const sensor_snapshot_t *snapshot)
 {
-	k_mutex_lock(&sensor_cache.lock, K_FOREVER);
+	xSemaphoreTake(sensor_cache.lock, portMAX_DELAY);
 	sensor_cache.snapshot = *snapshot;
-	k_mutex_unlock(&sensor_cache.lock);
+	xSemaphoreGive(sensor_cache.lock);
 }
 
 void sensor_snapshot_read(sensor_snapshot_t *snapshot)
 {
-	k_mutex_lock(&sensor_cache.lock, K_FOREVER);
+	xSemaphoreTake(sensor_cache.lock, portMAX_DELAY);
 	*snapshot = sensor_cache.snapshot;
-	k_mutex_unlock(&sensor_cache.lock);
+	xSemaphoreGive(sensor_cache.lock);
 }

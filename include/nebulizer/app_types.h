@@ -16,6 +16,9 @@ typedef enum {
 	TREATMENT_STATE_PAUSED,
 	TREATMENT_STATE_DONE,
 	TREATMENT_STATE_FAULT,
+	/* Append-only: values 0..8 are already part of the host protocol. */
+	TREATMENT_STATE_PREHEATING,
+	TREATMENT_STATE_KEEP_WARM,
 } treatment_state_t;
 
 typedef enum {
@@ -62,6 +65,7 @@ typedef struct {
 	uint16_t duration_sec;
 	air_level_t air_level;
 	mist_level_t mist_level;
+	bool keep_warm_enabled;
 } treatment_config_t;
 
 typedef struct {
@@ -82,6 +86,7 @@ typedef enum {
 	HEAT_CONTROL_PHASE_IDLE = 0,
 	HEAT_CONTROL_PHASE_PB11_FULL_POWER,
 	HEAT_CONTROL_PHASE_PB11_OUTLET,
+	HEAT_CONTROL_PHASE_PA5_KEEP_WARM,
 } heat_control_phase_t;
 
 typedef struct {

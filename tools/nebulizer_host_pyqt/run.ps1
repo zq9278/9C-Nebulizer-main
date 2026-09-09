@@ -7,11 +7,7 @@ if ($env:VIRTUAL_ENV) {
     $PythonCandidates += (Join-Path $env:VIRTUAL_ENV "Scripts\python.exe")
 }
 
-$PythonCandidates += @(
-    "C:\Users\zq\.zinstaller\.venv\Scripts\python.exe",
-    "D:\Technology_stack\Zephyr\zephyrproject_test\.venv\Scripts\python.exe",
-    "D:\zephyrproject\.venv\Scripts\python.exe"
-)
+$PythonCandidates += (Join-Path $ScriptDir ".venv\Scripts\python.exe")
 
 $DefaultPython = $PythonCandidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
 

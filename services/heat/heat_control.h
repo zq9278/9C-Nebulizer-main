@@ -5,6 +5,7 @@
 
 int heat_control_init(void);
 fault_code_t heat_control_step(const telemetry_status_t *status);
+fault_code_t heat_control_keep_warm_step(const telemetry_status_t *status);
 int heat_control_stop(void);
 int heat_control_set_pid(const pid_params_t *pid);
 void heat_control_get_pid(pid_params_t *pid);

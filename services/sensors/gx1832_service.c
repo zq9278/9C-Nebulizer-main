@@ -1,3 +1,4 @@
+#include <platform/util.h>
 #include "gx1832_service.h"
 
 #include <errno.h>

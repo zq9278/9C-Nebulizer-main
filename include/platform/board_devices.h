@@ -7,14 +7,14 @@
 
 int board_devices_init(void);
 const struct board_resources *board_get_resources(void);
-const struct device *board_get_host_uart(void);
-const struct device *board_get_mist_uart(void);
-const struct device *board_get_debug_uart(void);
-const struct gpio_dt_spec *board_get_triac_en(void);
-const struct gpio_dt_spec *board_get_zcd_in(void);
-const struct gpio_dt_spec *board_get_otp_reset(void);
-const struct pwm_dt_spec *board_get_fan1_pwm(void);
-const struct adc_dt_spec *board_get_ntc(enum board_ntc_id id);
+const struct board_device *board_get_host_uart(void);
+const struct board_device *board_get_mist_uart(void);
+const struct board_device *board_get_debug_uart(void);
+const struct board_gpio *board_get_triac_en(void);
+const struct board_gpio *board_get_zcd_in(void);
+const struct board_gpio *board_get_otp_reset(void);
+const struct board_pwm *board_get_fan1_pwm(void);
+const struct board_adc *board_get_ntc(enum board_ntc_id id);
 bool board_ntc_is_enabled(enum board_ntc_id id);
 
 #endif /* PLATFORM_BOARD_DEVICES_H_ */

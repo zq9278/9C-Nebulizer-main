@@ -8,15 +8,14 @@
 #include <drivers_app/pwm/pwm_output.h>
 #include <platform/board_devices.h>
 #include <platform/board_resources.h>
-#include <zephyr/kernel.h>
-#include <zephyr/logging/log.h>
+#include <platform/runtime.h>
+#include <platform/log.h>
 
-LOG_MODULE_REGISTER(fan_control, CONFIG_NEBULIZER_LOG_LEVEL);
-
-static const struct pwm_dt_spec *fan_pwm;
+static const struct board_pwm *fan_pwm;
 
 static struct {
-	struct k_mutex lock;
+	StaticSemaphore_t lock_storage;
+	SemaphoreHandle_t lock;
 	pid_params_t pid;
 	fan_control_diag_t diag;
 	int16_t last_error_deci_c;
@@ -26,7 +25,7 @@ static struct {
 
 static uint8_t fan_apply_hw_polarity(uint8_t percent)
 {
-	if (IS_ENABLED(CONFIG_NEBULIZER_FAN_PWM_INVERTED)) {
+	if (APP_FAN_PWM_INVERTED) {
 		return 100U - percent;
 	}
 
@@ -35,7 +34,8 @@ static uint8_t fan_apply_hw_polarity(uint8_t percent)
 
 int fan_control_init(void)
 {
-	k_mutex_init(&fan_ctx.lock);
+	fan_ctx.lock = xSemaphoreCreateMutexStatic(&fan_ctx.lock_storage);
+	configASSERT(fan_ctx.lock != NULL);
 	memset(&fan_ctx.diag, 0, sizeof(fan_ctx.diag));
 	fan_ctx.pid.kp_milli = APP_FAN_PID_KP_DEFAULT_MILLI;
 	fan_ctx.pid.ki_milli = APP_FAN_PID_KI_DEFAULT_MILLI;
@@ -58,7 +58,7 @@ static bool fan_pid_valid(const pid_params_t *pid)
 	       (pid->ki_milli >= 0) && (pid->ki_milli <= APP_FAN_PID_KI_MAX_MILLI) &&
 	       (pid->kd_milli >= 0) && (pid->kd_milli <= APP_FAN_PID_KD_MAX_MILLI) &&
 	       (pid->integral_limit_permille >= 0) &&
-	       (pid->integral_limit_permille <= APP_FAN_PID_I_LIMIT_MAX_PERMILLE);
+	       (pid->integral_limit_permille <= (int32_t)APP_FAN_PID_I_LIMIT_MAX_PERMILLE);
 }
 
 static uint8_t fan_percent_for_level(air_level_t level)
@@ -80,14 +80,14 @@ int fan_control_set_level(air_level_t level)
 {
 	uint8_t percent = fan_percent_for_level(level);
 
-	k_mutex_lock(&fan_ctx.lock, K_FOREVER);
+	xSemaphoreTake(fan_ctx.lock, portMAX_DELAY);
 	memset(&fan_ctx.diag, 0, sizeof(fan_ctx.diag));
 	fan_ctx.diag.base_percent = percent;
 	fan_ctx.diag.output_percent = percent;
 	fan_ctx.first_sample = true;
 	fan_ctx.last_error_deci_c = 0;
 	fan_ctx.last_pid_update_ms = 0U;
-	k_mutex_unlock(&fan_ctx.lock);
+	xSemaphoreGive(fan_ctx.lock);
 
 	return pwm_output_set_percent(fan_pwm, fan_apply_hw_polarity(percent));
 }
@@ -121,7 +121,7 @@ int fan_control_step(const telemetry_status_t *status)
 	target_temp = (int16_t)status->config.target_temp_deci_c;
 	error_deci_c = measured_temp - target_temp;
 
-	k_mutex_lock(&fan_ctx.lock, K_FOREVER);
+	xSemaphoreTake(fan_ctx.lock, portMAX_DELAY);
 	fan_ctx.diag.enabled = true;
 	fan_ctx.diag.measured_temp_deci_c = measured_temp;
 	fan_ctx.diag.target_temp_deci_c = target_temp;
@@ -139,11 +139,11 @@ int fan_control_step(const telemetry_status_t *status)
 		fan_ctx.last_error_deci_c = error_deci_c;
 		fan_ctx.last_pid_update_ms = 0U;
 		output_percent = base_percent;
-		k_mutex_unlock(&fan_ctx.lock);
+		xSemaphoreGive(fan_ctx.lock);
 		return pwm_output_set_percent(fan_pwm, fan_apply_hw_polarity(output_percent));
 	}
 
-	now_ms = k_uptime_get_32();
+	now_ms = runtime_now_ms();
 	elapsed_ms = (fan_ctx.last_pid_update_ms == 0U) ?
 		     APP_FAN_PID_PERIOD_MS : (now_ms - fan_ctx.last_pid_update_ms);
 	if (elapsed_ms >= APP_FAN_PID_PERIOD_MS) {
@@ -192,19 +192,19 @@ int fan_control_step(const telemetry_status_t *status)
 	}
 	fan_ctx.diag.output_percent = output_percent;
 	fan_ctx.diag.saturated = boost_permille >= (APP_FAN_PID_MAX_BOOST_PERCENT * 10U);
-	k_mutex_unlock(&fan_ctx.lock);
+	xSemaphoreGive(fan_ctx.lock);
 
 	return pwm_output_set_percent(fan_pwm, fan_apply_hw_polarity(output_percent));
 }
 
 int fan_control_stop(void)
 {
-	k_mutex_lock(&fan_ctx.lock, K_FOREVER);
+	xSemaphoreTake(fan_ctx.lock, portMAX_DELAY);
 	memset(&fan_ctx.diag, 0, sizeof(fan_ctx.diag));
 	fan_ctx.first_sample = true;
 	fan_ctx.last_error_deci_c = 0;
 	fan_ctx.last_pid_update_ms = 0U;
-	k_mutex_unlock(&fan_ctx.lock);
+	xSemaphoreGive(fan_ctx.lock);
 	return pwm_output_set_percent(fan_pwm, fan_apply_hw_polarity(0U));
 }
 
@@ -214,7 +214,7 @@ int fan_control_set_pid(const pid_params_t *pid)
 		return -EINVAL;
 	}
 
-	k_mutex_lock(&fan_ctx.lock, K_FOREVER);
+	xSemaphoreTake(fan_ctx.lock, portMAX_DELAY);
 	fan_ctx.pid = *pid;
 	fan_ctx.diag.p_term_raw = 0;
 	fan_ctx.diag.i_term_raw = 0;
@@ -223,9 +223,9 @@ int fan_control_set_pid(const pid_params_t *pid)
 	fan_ctx.first_sample = true;
 	fan_ctx.last_error_deci_c = 0;
 	fan_ctx.last_pid_update_ms = 0U;
-	k_mutex_unlock(&fan_ctx.lock);
+	xSemaphoreGive(fan_ctx.lock);
 	LOG_INF("fan pid updated kp=%d ki=%d kd=%d i_limit=%d",
-		pid->kp_milli, pid->ki_milli, pid->kd_milli, pid->integral_limit_permille);
+		(int)pid->kp_milli, (int)pid->ki_milli, (int)pid->kd_milli, (int)pid->integral_limit_permille);
 	return 0;
 }
 
@@ -235,9 +235,9 @@ void fan_control_get_pid(pid_params_t *pid)
 		return;
 	}
 
-	k_mutex_lock(&fan_ctx.lock, K_FOREVER);
+	xSemaphoreTake(fan_ctx.lock, portMAX_DELAY);
 	*pid = fan_ctx.pid;
-	k_mutex_unlock(&fan_ctx.lock);
+	xSemaphoreGive(fan_ctx.lock);
 }
 
 void fan_control_get_diag(fan_control_diag_t *diag)
@@ -246,7 +246,7 @@ void fan_control_get_diag(fan_control_diag_t *diag)
 		return;
 	}
 
-	k_mutex_lock(&fan_ctx.lock, K_FOREVER);
+	xSemaphoreTake(fan_ctx.lock, portMAX_DELAY);
 	*diag = fan_ctx.diag;
-	k_mutex_unlock(&fan_ctx.lock);
+	xSemaphoreGive(fan_ctx.lock);
 }

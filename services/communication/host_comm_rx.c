@@ -2,7 +2,7 @@
 
 #include <services/communication/host_comm_tx.h>
 #include <services/communication/host_comm_service.h>
-#include <zephyr/kernel.h>
+#include <platform/runtime.h>
 
 /*
  * HostCommTask 同时负责 Host UART 的接收和发送。
@@ -17,7 +17,7 @@
 void host_comm_rx_task(void)
 {
 	while (true) {
-		(void)host_comm_service_process_rx(K_MSEC(10));
-		(void)host_comm_tx_process_one(K_NO_WAIT);
+		(void)host_comm_service_process_rx(pdMS_TO_TICKS(10));
+		(void)host_comm_tx_process_one(0);
 	}
 }

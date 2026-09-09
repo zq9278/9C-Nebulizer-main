@@ -2,16 +2,16 @@
 
 #include <errno.h>
 
-int input_gpio_init(const struct gpio_dt_spec *spec, gpio_flags_t extra_flags)
+int input_gpio_init(const struct board_gpio *spec, gpio_flags_t extra_flags)
 {
-	if ((spec == NULL) || !gpio_is_ready_dt(spec)) {
+	if ((spec == NULL) || !board_gpio_ready(spec)) {
 		return -ENODEV;
 	}
 
-	return gpio_pin_configure_dt(spec, GPIO_INPUT | extra_flags);
+	return board_gpio_configure(spec, GPIO_INPUT | extra_flags);
 }
 
-int input_gpio_read(const struct gpio_dt_spec *spec, bool *active)
+int input_gpio_read(const struct board_gpio *spec, bool *active)
 {
 	int ret;
 
@@ -19,7 +19,7 @@ int input_gpio_read(const struct gpio_dt_spec *spec, bool *active)
 		return -EINVAL;
 	}
 
-	ret = gpio_pin_get_dt(spec);
+	ret = board_gpio_get(spec);
 	if (ret < 0) {
 		return ret;
 	}

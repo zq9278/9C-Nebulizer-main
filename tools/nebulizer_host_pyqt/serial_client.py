@@ -16,6 +16,7 @@ from models import (
     PreheatPidModel,
     RuntimeModel,
     StatusModel,
+    TreatmentEventModel,
 )
 from protocol import HostCmd, HostFrameType, build_command, extract_frames, parse_ack
 
@@ -52,6 +53,7 @@ class SerialClient(QObject):
     fan_pid_updated = pyqtSignal(object)
     runtime_updated = pyqtSignal(object)
     maintenance_updated = pyqtSignal(object)
+    treatment_event_received = pyqtSignal(object)
 
     def __init__(self) -> None:
         super().__init__()
@@ -200,6 +202,7 @@ class SerialClient(QObject):
                 mist_running=bool(payload[17]),
                 heartbeat_ok=bool(payload[18]),
                 mode=payload[19],
+                keep_warm_enabled=bool(payload[20]) if len(payload) >= 21 else False,
             )
             self.status_updated.emit(status)
             self.log_message.emit(
@@ -218,12 +221,32 @@ class SerialClient(QObject):
                 duration_sec=_le16(payload, 3),
                 air_level=payload[5],
                 mist_level=payload[6],
+                keep_warm_enabled=bool(payload[7]) if len(payload) >= 8 else False,
             )
             self.config_updated.emit(config)
             self.log_message.emit(
                 "rx config "
                 f"mode={config.mode} target={config.target_temp_deci_c / 10.0:.1f}C "
-                f"time={config.duration_sec}s air={config.air_level} mist={config.mist_level}"
+                f"time={config.duration_sec}s air={config.air_level} mist={config.mist_level} "
+                f"keep_warm={int(config.keep_warm_enabled)}"
+            )
+            return
+
+        if frame.frame_type == HostFrameType.EVENT and len(payload) >= 12:
+            event = TreatmentEventModel(
+                event_id=payload[0],
+                mode=payload[1],
+                state=payload[2],
+                keep_warm_enabled=bool(payload[3]),
+                remaining_sec=_le32(payload, 4),
+                outlet_temp_deci_c=_sle16(payload, 8),
+                kettle_temp_deci_c=_sle16(payload, 10),
+            )
+            self.treatment_event_received.emit(event)
+            self.log_message.emit(
+                "rx treatment event "
+                f"id=0x{event.event_id:02x} state={event.state} "
+                f"remaining={event.remaining_sec}s"
             )
             return
 
@@ -349,6 +372,8 @@ class SerialClient(QObject):
                 runtime.fan_pid_i_term_permille = _sle16(payload, 88)
             if len(payload) >= 91:
                 runtime.heat_control_phase = payload[90]
+            if len(payload) >= 92:
+                runtime.keep_warm_enabled = bool(payload[91])
             self.runtime_updated.emit(runtime)
             self.log_message.emit(
                 "rx runtime "
@@ -441,6 +466,9 @@ class SerialClient(QObject):
 
     def set_mist_level(self, level: int) -> None:
         self._send(HostCmd.SET_MIST_LEVEL, bytes([level]))
+
+    def set_keep_warm(self, enabled: bool) -> None:
+        self._send(HostCmd.SET_KEEP_WARM, bytes([1 if enabled else 0]))
 
     def apply_pid(self, kp_milli: int, ki_milli: int, kd_milli: int, i_limit_permille: int) -> None:
         payload = (

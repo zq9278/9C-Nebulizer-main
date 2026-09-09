@@ -9,6 +9,7 @@ void settings_defaults_get(treatment_config_t *config)
 	config->duration_sec = APP_DEFAULT_TREATMENT_TIME_SEC;
 	config->air_level = AIR_LEVEL_MID;
 	config->mist_level = MIST_LEVEL_UI_MID;
+	config->keep_warm_enabled = false;
 }
 
 void settings_defaults_get_pid(pid_params_t *pid)

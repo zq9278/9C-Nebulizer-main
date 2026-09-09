@@ -310,5 +310,5 @@ Repository implementation:
 - Firmware maintenance control:
   - `src/app/app_tasks.c`
 
-The host app is intentionally kept outside the Zephyr root build so
-`west build -b nebulizer_g070cbt6 .` remains unchanged.
+The host app is intentionally kept outside the FreeRTOS root build so
+`cmake --build --preset debug` builds only the firmware.

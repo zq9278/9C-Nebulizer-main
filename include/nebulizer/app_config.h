@@ -1,24 +1,14 @@
 #ifndef NEBULIZER_APP_CONFIG_H_
 #define NEBULIZER_APP_CONFIG_H_
+#define APP_FAN_PWM_INVERTED 1
 /* 默认治疗目标温度，单位 0.1C；420 表示 42.0C。 */
 #define APP_DEFAULT_TARGET_TEMP_DECI_C          420
 
 /* 允许用户设置的最高治疗目标温度，单位 0.1C；450 表示 45.0C。 */
 #define APP_MAX_TARGET_TEMP_DECI_C              450
 
-/* 出雾口 1 过温故障阈值，单位 0.1C；达到 46.0C 立即进入故障保护。 */
+/* 出雾口 1 过温故障阈值，单位 0.1C；达到 48.0C 立即进入故障保护。 */
 #define APP_OUTLET1_OVER_TEMP_FAULT_DECI_C      480
-
-/* 管道积水判定：PA5 达到 98.0C 后，PB11 在连续下降段内累计下降 5.0C 即报错。 */
-#define APP_PIPE_WATER_PA5_MIN_DECI_C            980
-#define APP_PIPE_WATER_PB11_DROP_DECI_C          50
-
-/* PB11 从下降段最低点回升超过 0.2C 时，认为连续下降已中断并重新统计。 */
-#define APP_PIPE_WATER_PB11_RISE_RESET_DECI_C    2
-
-#if (APP_PIPE_WATER_PB11_DROP_DECI_C <= 0)
-#error "pipe water PB11 drop threshold must be positive"
-#endif
 
 /* 默认治疗时长，单位秒；600 表示默认治疗 10 分钟。 */
 #define APP_DEFAULT_TREATMENT_TIME_SEC          600
@@ -101,6 +91,9 @@
 /* 遥测任务栈大小，单位字节。 */
 #define APP_TELEMETRY_STACK_SIZE                1536
 
+/* EEPROM 延迟写入专用工作队列栈，避免写周期等待阻塞系统工作队列。 */
+#define APP_STORAGE_STACK_SIZE                  1024
+
 /* 风扇 PWM 周期，单位微秒；100 表示 10 kHz PWM。 */
 #define FAN_PWM_PERIOD_USEC                     100U
 
@@ -151,8 +144,8 @@
 /* TRIAC_EN 功率控制窗口包含的时间片数量；12ms * 100 = 1200ms 完整功率窗口。 */
 #define APP_TRIAC_POWER_WINDOW_SLICES           100U
 
-/* PB11 Outlet PID 默认 Kp，按 milli 放大保存；10000 表示 10.000。 */
-#define APP_HEAT_PID_KP_DEFAULT_MILLI           10000
+/* PB11 Outlet PID 默认 Kp，按 milli 放大保存；9000 表示 9.000。 */
+#define APP_HEAT_PID_KP_DEFAULT_MILLI           9000
 
 /* PB11 Outlet PID 默认 Ki，按 milli 放大保存；当前 0 表示先关闭积分。 */
 #define APP_HEAT_PID_KI_DEFAULT_MILLI           0
@@ -172,18 +165,25 @@
 #define APP_HEAT_PREHEAT_PID_KD_DEFAULT_MILLI   0
 #define APP_HEAT_PREHEAT_PID_I_LIMIT_DEFAULT    0
 
-/* PB11 低于 30.0C 时使用固定满功率；达到该温度后切换到 PB11 PID。 */
+/* PB11 低于 30.0C 时使用固定满功率；达到该温度后切换到 PB11 PID。预热 */
 #define APP_HEAT_FULL_POWER_BELOW_DECI_C        300
 #define APP_HEAT_FULL_POWER_PERMILLE            1000U
 
-/* PA5 最高温停热阈值；1100 表示 110.0C，达到后只停热、不报故障。 */
-#define APP_HEAT_PA5_STOP_DECI_C                1100
+/* 持续保温：PA5 锅体目标 65.0C，使用比例控制且最大输出 20%。 */
+#define APP_KEEP_WARM_TARGET_DECI_C              650
+#define APP_KEEP_WARM_KP_MILLI                   9000
+#define APP_KEEP_WARM_OUTPUT_MAX_PERMILLE        200U
+
+/* I2C EEPROM 参数。默认按常见 24C02：7-bit 地址 0x50、8-bit 字地址。 */
+#define APP_SETTINGS_EEPROM_I2C_ADDR             0x50U
+#define APP_SETTINGS_EEPROM_ADDR_WIDTH_BYTES     1U
+#define APP_SETTINGS_EEPROM_WRITE_CYCLE_MS       5U
 
 /* A：PB11 加热 PID 阶段的最终输出上限，单位 permille；默认 200 表示 20%。 */
 #define APP_HEAT_PID_OUTPUT_MAX_PERMILLE        200U
 
-/* B：PB11 加热 PID 阶段的 PA5 停热温度，单位 0.1C；默认 1000 表示 100.0C。 */
-#define APP_HEAT_PID_PA5_STOP_DECI_C            1000
+/* PA5 通用停热温度；两个加热阶段达到120.0C后都停热，但不报故障。 */
+#define APP_HEAT_PA5_STOP_DECI_C                1200
 
 #if (APP_HEAT_PID_OUTPUT_MAX_PERMILLE > 1000U)
 #error "heat PID output limit must be in the range 0..1000 permille"
@@ -193,8 +193,13 @@
 #error "heat full-power output must be in the range 0..1000 permille"
 #endif
 
-#if (APP_HEAT_PID_PA5_STOP_DECI_C > APP_HEAT_PA5_STOP_DECI_C)
-#error "heat PID PA5 stop temperature must not exceed the global PA5 stop temperature"
+#if (APP_KEEP_WARM_OUTPUT_MAX_PERMILLE > 1000U)
+#error "keep-warm output limit must be in the range 0..1000 permille"
+#endif
+
+#if (APP_SETTINGS_EEPROM_ADDR_WIDTH_BYTES != 1U) && \
+	(APP_SETTINGS_EEPROM_ADDR_WIDTH_BYTES != 2U)
+#error "EEPROM address width must be one or two bytes"
 #endif
 
 /* 允许上位机写入的最大 Kp，按 milli 放大保存。 */

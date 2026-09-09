@@ -6,8 +6,7 @@
 .idea/
 .vscode/
 
-# Zephyr / CMake / Ninja build outputs
-.west/
+# CMake / Ninja build outputs
 build/
 build*/
 cmake-build-*/

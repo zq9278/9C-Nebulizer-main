@@ -30,6 +30,7 @@ class HostCmd:
     SET_TIME = 0x12
     SET_AIR_LEVEL = 0x13
     SET_MIST_LEVEL = 0x14
+    SET_KEEP_WARM = 0x15
     START = 0x20
     PAUSE = 0x21
     RESUME = 0x22
@@ -51,6 +52,14 @@ class HostCmd:
     SET_FAN_PID = 0x32
     GET_PREHEAT_PID = 0x33
     SET_PREHEAT_PID = 0x34
+
+
+class HostTreatmentEvent:
+    PREHEAT_STARTED = 0x01
+    TREATMENT_STARTED = 0x02
+    TREATMENT_FINISHED = 0x03
+    KEEP_WARM_STARTED = 0x04
+    KEEP_WARM_STOPPED = 0x05
 
 
 @dataclass

@@ -1,3 +1,0 @@
-config BOARD_NEBULIZER_G070CBT6
-	bool
-	select SOC_STM32G070XX

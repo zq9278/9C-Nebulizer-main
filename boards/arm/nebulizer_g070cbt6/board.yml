@@ -1,6 +1,0 @@
-board:
-  name: nebulizer_g070cbt6
-  full_name: 9C Nebulizer STM32G070CBT6
-  vendor: 9c
-  socs:
-    - name: stm32g070xx

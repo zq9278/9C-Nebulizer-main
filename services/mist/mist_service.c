@@ -8,10 +8,8 @@
 #include <services/mist/mist_board_client.h>
 #include <src/app/app_context.h>
 #include <src/app/app_events.h>
-#include <zephyr/kernel.h>
-#include <zephyr/logging/log.h>
-
-LOG_MODULE_REGISTER(mist_service, CONFIG_NEBULIZER_LOG_LEVEL);
+#include <platform/runtime.h>
+#include <platform/log.h>
 
 struct mist_service_request {
 	uint8_t cmd_id;
@@ -19,7 +17,9 @@ struct mist_service_request {
 	uint16_t payload_len;
 };
 
-K_MSGQ_DEFINE(mist_req_msgq, sizeof(struct mist_service_request), APP_MIST_TX_QUEUE_LEN, 4);
+static StaticQueue_t mist_req_msgq_control;
+static uint8_t mist_req_msgq_storage[APP_MIST_TX_QUEUE_LEN * sizeof(struct mist_service_request)];
+static QueueHandle_t mist_req_msgq;
 
 static struct {
 	bool desired_running;
@@ -52,11 +52,13 @@ static int mist_service_queue(uint8_t cmd_id, const uint8_t *payload, uint16_t p
 		memcpy(req.payload, payload, payload_len);
 	}
 
-	return k_msgq_put(&mist_req_msgq, &req, K_NO_WAIT);
+	return (xQueueSend(mist_req_msgq, &req, 0) == pdPASS ? 0 : -EAGAIN);
 }
 
 int mist_service_init(void)
 {
+	mist_req_msgq = xQueueCreateStatic(APP_MIST_TX_QUEUE_LEN, sizeof(struct mist_service_request), mist_req_msgq_storage, &mist_req_msgq_control);
+	configASSERT(mist_req_msgq != NULL);
 	memset(&mist_ctx, 0, sizeof(mist_ctx));
 	return mist_board_client_init();
 }
@@ -116,10 +118,10 @@ void mist_service_process_task(void)
 	mist_board_status_t status;
 
 	while (true) {
-		mist_board_client_process_rx(K_MSEC(20));
+		mist_board_client_process_rx(pdMS_TO_TICKS(20));
 		mist_board_client_process_timeouts();
 
-		if (k_msgq_get(&mist_req_msgq, &req, K_NO_WAIT) == 0) {
+		if (xQueueReceive(mist_req_msgq, &req, 0) == pdPASS) {
 			struct mist_client_request client_req = {
 				.cmd_id = req.cmd_id,
 				.payload_len = req.payload_len,
@@ -129,9 +131,9 @@ void mist_service_process_task(void)
 			(void)mist_board_client_submit(&client_req);
 		}
 
-			if ((int32_t)(k_uptime_get_32() - mist_ctx.last_status_poll_ms) >= 1000) {
+			if ((int32_t)(runtime_now_ms() - mist_ctx.last_status_poll_ms) >= 1000) {
 				(void)mist_service_queue(MIST_CMD_GET_STATUS, NULL, 0U);
-				mist_ctx.last_status_poll_ms = k_uptime_get_32();
+				mist_ctx.last_status_poll_ms = runtime_now_ms();
 			}
 
 			mist_board_client_get_status(&status);
@@ -147,7 +149,7 @@ void mist_service_process_task(void)
 				mist_ctx.last_reported_status = status;
 				mist_ctx.last_reported_status_valid = true;
 			}
-			k_msleep(10);
+			vTaskDelay(pdMS_TO_TICKS(10));
 		}
 }
 

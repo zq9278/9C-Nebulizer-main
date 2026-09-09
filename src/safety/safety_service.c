@@ -9,10 +9,8 @@
 #include <services/mist/mist_service.h>
 #include <services/sensors/sensor_snapshot.h>
 #include <src/app/app_context.h>
-#include <zephyr/kernel.h>
-#include <zephyr/logging/log.h>
-
-LOG_MODULE_REGISTER(safety_service, CONFIG_NEBULIZER_LOG_LEVEL);
+#include <platform/runtime.h>
+#include <platform/log.h>
 
 /* 这些标志仅用于抑制重复日志，避免相同故障在周期轮询中刷屏。 */
 static struct {
@@ -23,13 +21,6 @@ static struct {
 	bool outlet_overtemp_logged;
 } safety_log_state;
 
-/* PA5 高温时跟踪 PB11 的当前连续下降段，用于识别疑似管道积水。 */
-static struct {
-	bool tracking;
-	int16_t peak_deci_c;
-	int16_t lowest_deci_c;
-} safety_pipe_water_state;
-
 /*
  * 盖子相关状态单独封装，是因为它需要：
  * - 原始采样值
@@ -39,8 +30,10 @@ static struct {
  * - 因缺水而触发的暂停锁存
  */
 static struct {
-	struct k_mutex lock;
-	struct k_work_delayable cover_debounce_work;
+	StaticSemaphore_t lock_storage;
+	SemaphoreHandle_t lock;
+	uint32_t cover_deadline_ms;
+	bool cover_debounce_pending;
 	bool cover_raw_closed;
 	bool cover_raw_valid;
 	bool cover_debounced_closed;
@@ -57,13 +50,18 @@ struct cover_state_snapshot {
 };
 
 /* 延时防抖回调：把原始值“提交”为稳定值。 */
-static void safety_service_cover_debounce_work(struct k_work *work)
+static void safety_service_cover_debounce_poll(void)
 {
-	ARG_UNUSED(work);
 
-	k_mutex_lock(&safety_cover_state.lock, K_FOREVER);
+	xSemaphoreTake(safety_cover_state.lock, portMAX_DELAY);
+    if (!safety_cover_state.cover_debounce_pending ||
+        (int32_t)(runtime_now_ms() - safety_cover_state.cover_deadline_ms) < 0) {
+        xSemaphoreGive(safety_cover_state.lock);
+        return;
+    }
+    safety_cover_state.cover_debounce_pending = false;
 	if (!safety_cover_state.cover_raw_valid) {
-		k_mutex_unlock(&safety_cover_state.lock);
+		xSemaphoreGive(safety_cover_state.lock);
 		return;
 	}
 
@@ -73,41 +71,42 @@ static void safety_service_cover_debounce_work(struct k_work *work)
 		safety_cover_state.cover_debounced_valid = true;
 		safety_cover_state.cover_change_pending = true;
 	}
-	k_mutex_unlock(&safety_cover_state.lock);
+	xSemaphoreGive(safety_cover_state.lock);
 }
 
 /* 输入原始盖子状态；如果检测到变化，则启动防抖计时。 */
 static void safety_service_cover_sample_raw(bool cover_closed)
 {
-	k_mutex_lock(&safety_cover_state.lock, K_FOREVER);
+	xSemaphoreTake(safety_cover_state.lock, portMAX_DELAY);
 	if (!safety_cover_state.cover_raw_valid) {
 		safety_cover_state.cover_raw_closed = cover_closed;
 		safety_cover_state.cover_raw_valid = true;
 		safety_cover_state.cover_debounced_closed = cover_closed;
 		safety_cover_state.cover_debounced_valid = true;
-		k_mutex_unlock(&safety_cover_state.lock);
+		xSemaphoreGive(safety_cover_state.lock);
 		return;
 	}
 
 	if (safety_cover_state.cover_raw_closed != cover_closed) {
 		safety_cover_state.cover_raw_closed = cover_closed;
-		(void)k_work_reschedule(&safety_cover_state.cover_debounce_work,
-					 K_MSEC(APP_COVER_DEBOUNCE_MS));
+		safety_cover_state.cover_deadline_ms = runtime_now_ms() + APP_COVER_DEBOUNCE_MS;
+		safety_cover_state.cover_debounce_pending = true;
 	}
-	k_mutex_unlock(&safety_cover_state.lock);
+	xSemaphoreGive(safety_cover_state.lock);
 }
 
 /* 读取一次当前防抖后的盖子状态快照，并消费 changed 标志。 */
 static struct cover_state_snapshot safety_service_cover_snapshot(void)
 {
+	safety_service_cover_debounce_poll();
 	struct cover_state_snapshot snapshot;
 
-	k_mutex_lock(&safety_cover_state.lock, K_FOREVER);
+	xSemaphoreTake(safety_cover_state.lock, portMAX_DELAY);
 	snapshot.closed = safety_cover_state.cover_debounced_closed;
 	snapshot.changed = safety_cover_state.cover_change_pending;
 	snapshot.pause_latched = safety_cover_state.cover_pause_latched;
 	safety_cover_state.cover_change_pending = false;
-	k_mutex_unlock(&safety_cover_state.lock);
+	xSemaphoreGive(safety_cover_state.lock);
 
 	return snapshot;
 }
@@ -115,63 +114,17 @@ static struct cover_state_snapshot safety_service_cover_snapshot(void)
 /* 设置“因为盖子打开而暂停”的锁存标志。 */
 static void safety_service_cover_set_pause_latched(bool active)
 {
-	k_mutex_lock(&safety_cover_state.lock, K_FOREVER);
+	xSemaphoreTake(safety_cover_state.lock, portMAX_DELAY);
 	safety_cover_state.cover_pause_latched = active;
-	k_mutex_unlock(&safety_cover_state.lock);
-}
-
-static void safety_service_pipe_water_reset(void)
-{
-	safety_pipe_water_state.tracking = false;
-	safety_pipe_water_state.peak_deci_c = 0;
-	safety_pipe_water_state.lowest_deci_c = 0;
-}
-
-/*
- * 仅在热疗且 PA5 >= 98C 时统计 PB11 的连续下降量。
- * 允许不超过 0.2C 的采样抖动；明显回升后从新的温度重新统计。
- */
-static bool safety_service_pipe_water_detected(const telemetry_status_t *status)
-{
-	int16_t pb11_deci_c = status->sensors.ntc_deci_c[BOARD_NTC_OUTLET1];
-	int16_t pa5_deci_c = status->sensors.ntc_deci_c[BOARD_NTC_KETTLE];
-
-	if ((status->state != TREATMENT_STATE_RUNNING_HOT) ||
-	    (pa5_deci_c < APP_PIPE_WATER_PA5_MIN_DECI_C)) {
-		safety_service_pipe_water_reset();
-		return false;
-	}
-
-	if (!safety_pipe_water_state.tracking) {
-		safety_pipe_water_state.tracking = true;
-		safety_pipe_water_state.peak_deci_c = pb11_deci_c;
-		safety_pipe_water_state.lowest_deci_c = pb11_deci_c;
-		return false;
-	}
-
-	if (pb11_deci_c < safety_pipe_water_state.lowest_deci_c) {
-		safety_pipe_water_state.lowest_deci_c = pb11_deci_c;
-	} else if (pb11_deci_c >
-		   (safety_pipe_water_state.lowest_deci_c +
-		    APP_PIPE_WATER_PB11_RISE_RESET_DECI_C)) {
-		safety_pipe_water_state.peak_deci_c = pb11_deci_c;
-		safety_pipe_water_state.lowest_deci_c = pb11_deci_c;
-	} else if (pb11_deci_c > safety_pipe_water_state.peak_deci_c) {
-		/* 小幅抖动不打断统计，但同步抬高下降段的起点。 */
-		safety_pipe_water_state.peak_deci_c = pb11_deci_c;
-	}
-
-	return ((int32_t)safety_pipe_water_state.peak_deci_c - pb11_deci_c) >=
-	       APP_PIPE_WATER_PB11_DROP_DECI_C;
+	xSemaphoreGive(safety_cover_state.lock);
 }
 
 /* 初始化互斥锁与防抖延时工作项。 */
 int safety_service_init(void)
 {
-	k_mutex_init(&safety_cover_state.lock);
-	k_work_init_delayable(&safety_cover_state.cover_debounce_work,
-			      safety_service_cover_debounce_work);
-	safety_service_pipe_water_reset();
+	safety_cover_state.lock = xSemaphoreCreateMutexStatic(&safety_cover_state.lock_storage);
+	configASSERT(safety_cover_state.lock != NULL);
+
 	return 0;
 }
 
@@ -208,7 +161,7 @@ struct safety_result safety_service_poll(void)
 {
 	struct safety_result result = { 0 };
 	telemetry_status_t status;
-	uint32_t now_ms = k_uptime_get_32();
+	uint32_t now_ms = runtime_now_ms();
 	struct cover_state_snapshot cover;
 
 	app_context_get_status(&status);
@@ -218,20 +171,20 @@ struct safety_result safety_service_poll(void)
 	if ((status.state == TREATMENT_STATE_BOOT) ||
 	    (status.state == TREATMENT_STATE_DONE)) {
 		safety_service_cover_set_pause_latched(false);
-		safety_service_pipe_water_reset();
 		return result;
 	}
 
 	if ((status.state == TREATMENT_STATE_READY) ||
 	    (status.state == TREATMENT_STATE_FAULT)) {
 		safety_service_cover_set_pause_latched(false);
-		k_mutex_lock(&safety_cover_state.lock, K_FOREVER);
+		xSemaphoreTake(safety_cover_state.lock, portMAX_DELAY);
 		safety_cover_state.mist_low_water_pause_latched = false;
-		k_mutex_unlock(&safety_cover_state.lock);
+		xSemaphoreGive(safety_cover_state.lock);
 	}
 
 	if (!app_context_heartbeat_alive(now_ms) &&
-	    ((status.state == TREATMENT_STATE_RUNNING_HOT) ||
+	    ((status.state == TREATMENT_STATE_PREHEATING) ||
+	     (status.state == TREATMENT_STATE_RUNNING_HOT) ||
 	     (status.state == TREATMENT_STATE_RUNNING_COLD))) {
 		LOG_WRN("host heartbeat timeout");
 		safety_service_enter_safe_state(FAULT_NONE);
@@ -276,7 +229,8 @@ struct safety_result safety_service_poll(void)
 	 * 状态仍为 RUNNING 时重复请求暂停，队列短暂满时也不会丢失联锁。
 	 */
 	if (!cover.closed) {
-		if ((status.state == TREATMENT_STATE_RUNNING_HOT) ||
+		if ((status.state == TREATMENT_STATE_PREHEATING) ||
+		    (status.state == TREATMENT_STATE_RUNNING_HOT) ||
 		    (status.state == TREATMENT_STATE_RUNNING_COLD)) {
 			safety_service_cover_set_pause_latched(true);
 			safety_service_enter_safe_state(FAULT_NONE);
@@ -347,28 +301,13 @@ struct safety_result safety_service_poll(void)
 		safety_log_state.ntc_short_mask &= ~bit;
 	}
 
-	if (safety_service_pipe_water_detected(&status)) {
-		int16_t pb11_deci_c = status.sensors.ntc_deci_c[BOARD_NTC_OUTLET1];
-		int16_t pa5_deci_c = status.sensors.ntc_deci_c[BOARD_NTC_KETTLE];
-
-		LOG_ERR("pipe water detected: PB11 %d.%dC -> %d.%dC, PA5 %d.%dC",
-			safety_pipe_water_state.peak_deci_c / 10,
-			abs(safety_pipe_water_state.peak_deci_c % 10),
-			pb11_deci_c / 10,
-			abs(pb11_deci_c % 10),
-			pa5_deci_c / 10,
-			abs(pa5_deci_c % 10));
-		safety_service_enter_safe_state(FAULT_PIPE_WATER);
-		result.fault = FAULT_PIPE_WATER;
-		return result;
-	}
-
 	if (status.mist.low_water) {
-		k_mutex_lock(&safety_cover_state.lock, K_FOREVER);
+		xSemaphoreTake(safety_cover_state.lock, portMAX_DELAY);
 		safety_cover_state.mist_low_water_pause_latched = true;
-		k_mutex_unlock(&safety_cover_state.lock);
+		xSemaphoreGive(safety_cover_state.lock);
 
-		if ((status.state == TREATMENT_STATE_RUNNING_HOT) ||
+		if ((status.state == TREATMENT_STATE_PREHEATING) ||
+		    (status.state == TREATMENT_STATE_RUNNING_HOT) ||
 		    (status.state == TREATMENT_STATE_RUNNING_COLD)) {
 			LOG_WRN("mist low water, pausing treatment");
 			safety_service_enter_safe_state(FAULT_NONE);
@@ -378,7 +317,7 @@ struct safety_result safety_service_poll(void)
 	} else {
 		bool mist_pause_latched;
 
-		k_mutex_lock(&safety_cover_state.lock, K_FOREVER);
+		xSemaphoreTake(safety_cover_state.lock, portMAX_DELAY);
 		mist_pause_latched = safety_cover_state.mist_low_water_pause_latched;
 		if (mist_pause_latched &&
 		    (status.state == TREATMENT_STATE_PAUSED) &&
@@ -387,7 +326,7 @@ struct safety_result safety_service_poll(void)
 		    cover.closed &&
 		    !cover.pause_latched) {
 			safety_cover_state.mist_low_water_pause_latched = false;
-			k_mutex_unlock(&safety_cover_state.lock);
+			xSemaphoreGive(safety_cover_state.lock);
 			LOG_INF("mist water restored, resuming treatment");
 			result.resume_requested = true;
 			return result;
@@ -398,10 +337,14 @@ struct safety_result safety_service_poll(void)
 		    (status.state == TREATMENT_STATE_FAULT)) {
 			safety_cover_state.mist_low_water_pause_latched = false;
 		}
-		k_mutex_unlock(&safety_cover_state.lock);
+		xSemaphoreGive(safety_cover_state.lock);
 	}
 
-	if ((status.mist.fault_code != 0U) && !status.mist.low_water) {
+	if ((status.mist.fault_code != 0U) && !status.mist.low_water &&
+	    ((status.state == TREATMENT_STATE_PREHEATING) ||
+	     (status.state == TREATMENT_STATE_RUNNING_HOT) ||
+	     (status.state == TREATMENT_STATE_RUNNING_COLD) ||
+	     (status.state == TREATMENT_STATE_PAUSED))) {
 		if (!safety_log_state.mist_fault_logged) {
 			LOG_ERR("mist board fault: %u", status.mist.fault_code);
 			safety_log_state.mist_fault_logged = true;
@@ -420,6 +363,7 @@ struct safety_result safety_service_poll(void)
 
 	if (((status.state == TREATMENT_STATE_READY) ||
 	     (status.state == TREATMENT_STATE_CONFIGURING) ||
+	     (status.state == TREATMENT_STATE_PREHEATING) ||
 	     (status.state == TREATMENT_STATE_RUNNING_HOT) ||
 	     (status.state == TREATMENT_STATE_RUNNING_COLD) ||
 	     (status.state == TREATMENT_STATE_PAUSED)) &&

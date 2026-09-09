@@ -1,5 +1,8 @@
 # Nebulizer 主控板与上位机通信协议说明
 
+热雾预热、正式治疗开始事件和治疗后保温的对接细节见
+[`PreheatKeepWarmProtocol.md`](PreheatKeepWarmProtocol.md)。
+
 本文档基于当前工程源码整理，面向上位机开发、联调和维护人员，说明主控板与上位机之间的串口协议、帧格式、命令集合、数据单位、参数范围、读写规则与典型通信流程。
 
 适用代码基线：
@@ -86,7 +89,7 @@
 | `HOST_FRAME_TYPE_ACK` | `0x02` | 主控 -> 上位机 | 成功确认 |
 | `HOST_FRAME_TYPE_NACK` | `0x03` | 主控 -> 上位机 | 失败确认 |
 | `HOST_FRAME_TYPE_STATUS` | `0x04` | 主控 -> 上位机 | 简版状态 |
-| `HOST_FRAME_TYPE_EVENT` | `0x05` | 保留 | 当前工程未使用 |
+| `HOST_FRAME_TYPE_EVENT` | `0x05` | 主控 -> 上位机 | 预热、正式治疗和保温事件 |
 | `HOST_FRAME_TYPE_CONFIG` | `0x06` | 主控 -> 上位机 | 配置快照 |
 | `HOST_FRAME_TYPE_PID` | `0x07` | 主控 -> 上位机 | PID 参数 |
 | `HOST_FRAME_TYPE_RUNTIME` | `0x08` | 主控 -> 上位机 | 完整运行时快照 |
@@ -149,6 +152,7 @@
 | `HOST_CMD_SET_TIME` | `0x12` | `time_min u16 LE` | 设置治疗时间，单位分钟 | `ACK` |
 | `HOST_CMD_SET_AIR_LEVEL` | `0x13` | `air_level u8` | 设置风量档位 | `ACK` |
 | `HOST_CMD_SET_MIST_LEVEL` | `0x14` | `mist_level u8` | 设置雾量档位 | `ACK` |
+| `HOST_CMD_SET_KEEP_WARM` | `0x15` | `enable u8` | 开关 PA5 持续保温并持久化 | `ACK` |
 | `HOST_CMD_SET_PID` | `0x29` | `kp i32 LE + ki i32 LE + kd i32 LE + i_limit i32 LE` | 设置 PB11 Outlet PID | 先 `PID`，后 `ACK` |
 | `HOST_CMD_SET_FAN_PID` | `0x32` | `kp i32 LE + ki i32 LE + kd i32 LE + i_limit i32 LE` | 设置出口温度风扇 PID | 先 `FAN_PID`，后 `ACK` |
 | `HOST_CMD_SET_PREHEAT_PID` | `0x34` | `kp i32 LE + ki i32 LE + kd i32 LE + i_limit i32 LE` | 设置 PB10 预热 PID | 先 `PREHEAT_PID`，后 `ACK` |
@@ -374,32 +378,23 @@ PB10反馈延迟保护：
 PA5限制：
 
 - A：`APP_HEAT_PID_OUTPUT_MAX_PERMILLE`，限制PID最终加热输出，范围 `0..1000`
-- B：`APP_HEAT_PID_PA5_STOP_DECI_C`，限制PID阶段PA5最高温，达到后停热但不报故障
-- B不能高于全阶段PA5限制 `APP_HEAT_PA5_STOP_DECI_C`
-- PB10预热阶段使用全阶段PA5限制110.0℃；PB11出口阶段使用B，当前100.0℃
+- `APP_HEAT_PA5_STOP_DECI_C`：两个加热阶段共用的PA5最高温限制，当前为120.0℃
+- 满功率阶段和PID阶段达到该温度后都会停热，但不报故障
 
 #### 8.8.2 PID 反馈来源
 
-- 预热PID测量值：PB10，目标值：55.0℃
-- 出口PID测量值：PB11，目标值：治疗配置中的Outlet Target
-- 运行时`heat_measured/target/error`跟随当前生效的PID阶段
-- PA5：110.0°C 非故障停热限制，不参与 PID 误差计算
+- PB11低于30℃时固定满功率运行，不执行PID
+- PB11达到30℃后，PID测量值为PB11，目标值为治疗配置中的Outlet Target
+- 运行时`heat_measured/target/error`跟随当前加热阶段
+- PA5不参与PID误差，两个加热阶段达到120.0℃时都会停止加热
 
 #### 8.8.3 故障级过温保护
 
 当前保留的温度故障阈值：
 
-- 出口温度 `>= 46.0°C`：`FAULT_OUTLET1_OVER_TEMP`
+- 出口温度 `>= 48.0°C`：`FAULT_OUTLET1_OVER_TEMP`
 
-该条件属于故障保护，会进入整机故障流程。PA5 达到 110.0°C 只停热，不进入故障流程。
-
-管道积水联合判定：
-
-- 仅在热疗运行且 PA5 `>= 98.0°C` 时监测
-- PB11 在同一连续下降段内累计下降 `>= 5.0°C`：触发 `FAULT_PIPE_WATER`
-- PB11 从下降段最低点回升超过 `0.2°C`：认为下降已中断，从当前温度重新统计
-- PA5 低于 `98.0°C` 或退出热疗运行：清除本次下降统计
-- 触发后立即停止加热、雾化和风扇，并向上位机显示“管道有水，暂停治疗”
+该条件属于故障保护，会进入整机故障流程。PA5达到120.0℃只停热，不进入故障流程。
 
 ### 8.9 出口温度风扇 PID
 
@@ -493,7 +488,8 @@ PA5限制：
 
 ### 9.5 `CLEAR_FAULT`
 
-只有当前状态为 `FAULT` 时，`CLEAR_FAULT` 才会成功把系统带回 `READY`。
+只要当前存在非零故障码，`CLEAR_FAULT` 就会清除故障并把系统带回 `READY`。
+如果实际故障条件仍然存在，安全任务会再次触发对应故障。
 
 ## 10. 查询类返回数据帧详解
 
@@ -511,7 +507,7 @@ PA5限制：
 
 负载长度：
 
-- 固定 `20` 字节
+- 固定 `21` 字节
 
 字段表：
 
@@ -532,6 +528,7 @@ PA5限制：
 | 17 | `mist_running` | `u8` | bool | 雾化板运行状态 |
 | 18 | `heartbeat_ok` | `u8` | bool | 心跳是否有效 |
 | 19 | `mode` | `u8` | 枚举 | 热/冷模式 |
+| 20 | `keep_warm_enabled` | `u8` | bool | PA5 持续保温开关 |
 
 注意事项：
 
@@ -543,7 +540,7 @@ PA5限制：
 
 负载长度：
 
-- 固定 `7` 字节
+- 固定 `8` 字节
 
 字段表：
 
@@ -554,6 +551,7 @@ PA5限制：
 | 3 | `duration_sec` | `u16 LE` | 秒 | 治疗时长 |
 | 5 | `air_level` | `u8` | 枚举 | 风量档位 |
 | 6 | `mist_level` | `u8` | 枚举 | 雾量档位 |
+| 7 | `keep_warm_enabled` | `u8` | bool | PA5 持续保温开关 |
 
 ### 10.3 `PID` 帧
 
@@ -653,7 +651,8 @@ PA5限制：
 | 84 | `fan_pid_measured_temp_deci_c` | `i16 LE` | `0.1°C` |
 | 86 | `fan_pid_target_temp_deci_c` | `i16 LE` | `0.1°C` |
 | 88 | `fan_pid_i_term_permille` | `i16 LE` | permille |
-| 90 | `heat_control_phase` | `u8` | 枚举：`0=IDLE, 1=PB10预热, 2=PB11出口` |
+| 90 | `heat_control_phase` | `u8` | 枚举：`0=IDLE, 1=PB11满功率预热, 2=PB11出口, 3=PA5保温` |
+| 91 | `keep_warm_enabled` | `u8` | bool |
 
 ### 10.5 `MAINT` 帧
 
@@ -689,6 +688,7 @@ PA5限制：
 | `11` | `RESUME` 时维护模式仍激活 |
 | `12` | 风扇 PID 参数非法 |
 | `13` | PB10 预热 PID 参数非法 |
+| `14` | `SET_KEEP_WARM` 参数非法 |
 | `0x7F` | 未知命令 |
 
 ### 11.2 状态/运行条件错误码
@@ -726,7 +726,6 @@ PA5限制：
 | `15` | `FAULT_STORAGE_ERROR` |
 | `16` | `FAULT_OUTLET1_OVER_TEMP` |
 | `17` | `FAULT_KETTLE_OVER_TEMP` |
-| `18` | `FAULT_PIPE_WATER`（管道有水，暂停治疗） |
 
 雾化板故障码当前重点值：
 
@@ -898,9 +897,9 @@ aa 55 01 20 03 04 00 20 00 42 00 0c 9c 0d 0a
 
 ### 14.4 当前项目实现限制
 
-- `settings_store` 目前只是 RAM cache，调用“保存”接口并不会真正写入持久化存储
-- 因此协议层看起来支持在线保存配置和 PID，但掉电后不会保留
-- 若上位机需要“永久保存”语义，需等主控存储层实现真正落盘
+- `settings_store` 将配置和三组 PID 写入 I2C EEPROM；默认地址为 `0x50`、8-bit 字地址
+- 参数变更采用约 1 秒延迟写入，以减少 EEPROM 擦写次数
+- EEPROM 型号、地址或字地址宽度与默认值不同时，需同步修改 `app_config.h`
 
 ## 15. 附录：常用枚举表
 
@@ -917,6 +916,8 @@ aa 55 01 20 03 04 00 20 00 42 00 0c 9c 0d 0a
 | `6` | `PAUSED` |
 | `7` | `DONE` |
 | `8` | `FAULT` |
+| `9` | `PREHEATING` |
+| `10` | `KEEP_WARM` |
 
 ### 15.2 模式 `treatment_mode_t`
 
