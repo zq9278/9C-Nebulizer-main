@@ -182,8 +182,8 @@
 /* A：PB11 加热 PID 阶段的最终输出上限，单位 permille；默认 200 表示 20%。 */
 #define APP_HEAT_PID_OUTPUT_MAX_PERMILLE        200U
 
-/* PA5 通用停热温度；两个加热阶段达到120.0C后都停热，但不报故障。 */
-#define APP_HEAT_PA5_STOP_DECI_C                1200
+/* PA5 干锅限温；两个加热阶段达到95.0C后都停热，但不报故障。 */
+#define APP_HEAT_PA5_STOP_DECI_C                950
 
 #if (APP_HEAT_PID_OUTPUT_MAX_PERMILLE > 1000U)
 #error "heat PID output limit must be in the range 0..1000 permille"

@@ -3,6 +3,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <platform/board_ids.h>
 
 struct ntc_convert_result {
 	int16_t temp_deci_c;
@@ -12,5 +13,7 @@ struct ntc_convert_result {
 
 struct ntc_convert_result ntc_convert_from_raw(uint16_t raw, uint16_t raw_max,
 					       uint32_t pullup_ohms);
+struct ntc_convert_result ntc_convert_from_raw_for_channel(enum board_ntc_id channel,
+	uint16_t raw, uint16_t raw_max, uint32_t pullup_ohms);
 
 #endif /* DRIVERS_APP_ADC_NTC_CONVERT_H_ */

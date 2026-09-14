@@ -48,6 +48,8 @@ UART RX 使用环形缓冲区和 `xSemaphoreGiveFromISR`；TX 在硬件 TC（最
 | Outlet2 NTC | PB12 / ADC1_IN16 | 12 位 |
 | Kettle NTC | PA5 / ADC1_IN5 | 12 位 |
 
+PB11/PB12 使用 R25=10 kΩ、B25/85=3435 K 的附件标称曲线；PB10/PA5 保留原曲线，详见 [NTC 参数](NTC.md)。
+
 ADC 使用固定通道序列、每次只选一个通道。通道 15/16 不能用四位通道编号的可配置序列模式。
 TIM15 以 1 MHz 连续运行，通过溢出中断扩展为 32 位微秒时钟，用于过零间隔过滤。
 过零和 TIM15 中断优先级为 0，UART 为 2，SysTick/PendSV 为最低优先级。

@@ -22,6 +22,7 @@ def main():
     output.mkdir(parents=True, exist_ok=True)
     common = ['protocols/common/crc16_modbus.c', 'protocols/common/frame_codec.c']
     cases = {
+        'adc/test_ntc_convert.c': ['drivers_app/adc/ntc_convert.c', 'drivers_app/adc/ntc_table.c'],
         'protocol/test_crc16_modbus.c': common,
         'protocol/test_frame_codec.c': common,
         'protocol/test_stream_parser.c': common + ['protocols/common/ring_frame_parser.c'],

@@ -63,7 +63,7 @@ int sensor_service_init(void)
 		LOG_INF("ntc table max %d.%d C resistance=%u ohm",
 			last->temp_deci_c / 10,
 			abs(last->temp_deci_c % 10),
-			(unsigned int)last->resistance_ohms);
+			(unsigned int)(last->resistance_deciohms / 10U));
 	}
 
 	return sensor_snapshot_init();
@@ -102,7 +102,8 @@ int sensor_service_sample(sensor_snapshot_t *snapshot)
 
 		snapshot->ntc_raw[i] = sample.raw[i];
 		ntc_filtered[i] = sensor_service_filter(ntc_filtered[i], sample.raw[i]);
-		converted = ntc_convert_from_raw(ntc_filtered[i], sample.raw_max, 10000U);
+		converted = ntc_convert_from_raw_for_channel((enum board_ntc_id)i,
+			ntc_filtered[i], sample.raw_max, 10000U);
 		snapshot->ntc_deci_c[i] = converted.temp_deci_c;
 
 		if (board_ntc_is_enabled((enum board_ntc_id)i)) {

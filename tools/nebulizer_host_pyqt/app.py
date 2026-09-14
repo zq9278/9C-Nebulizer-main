@@ -923,8 +923,8 @@ class MainWindow(QMainWindow):
             hint = "KEEP WARM: PA5 is controlled to the configured firmware target."
         elif runtime.state != 4:  # TREATMENT_STATE_RUNNING_HOT
             hint = "HOT treatment is not running; PID and staged heat outputs are inactive."
-        elif pa5_c >= 120.0:
-            hint = "PA5 >= 120C: heating is paused without raising a fault."
+        elif pa5_c >= 95.0:
+            hint = "PA5 >= 95C: heating is paused without raising a fault."
         elif runtime.heat_control_phase == 1:
             hint = "PB11 is below 30C; the heater is running at fixed 100% output."
         elif error_c <= 0.0:
