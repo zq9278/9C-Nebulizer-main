@@ -237,7 +237,7 @@ class MainWindow(QMainWindow):
         self.fan_i_limit_box.setRange(0, 100)
         self.fan_kp_box.setValue(1.0)
         self.fan_i_limit_box.setValue(50)
-        self.fan_pid_range_label = QLabel("LOW 40-50% / MID 60-70% / HIGH 80-90%")
+        self.fan_pid_range_label = QLabel("LOW 30-40% / MID 35-45% / HIGH 40-50%")
         self.fan_pid_live_label = QLabel("Waiting for runtime data")
         read_fan_pid_button = QPushButton("Read Fan PID")
         apply_fan_pid_button = QPushButton("Apply Fan PID")

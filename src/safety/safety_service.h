@@ -15,6 +15,9 @@ struct safety_result {
 /* 初始化安全服务内部的锁和防抖 work。 */
 int safety_service_init(void);
 
+/* Clear automatic recovery latches only after PAUSED -> running is accepted. */
+void safety_service_acknowledge_resume(void);
+
 /* 周期轮询安全条件，并返回本轮应触发的安全动作。 */
 struct safety_result safety_service_poll(void);
 

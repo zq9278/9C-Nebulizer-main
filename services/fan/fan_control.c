@@ -112,12 +112,11 @@ int fan_control_step(const telemetry_status_t *status)
 		return -EINVAL;
 	}
 
-	base_percent = fan_percent_for_level(status->config.air_level);
-	/* Preheating requires airflow even when the saved treatment level is OFF. */
-	if ((status->state == TREATMENT_STATE_PREHEATING) &&
-	    (base_percent < FAN_LEVEL_LOW_PERCENT)) {
-		base_percent = FAN_LEVEL_LOW_PERCENT;
+	/* Preheating is fixed at LOW; do not apply the treatment temperature boost. */
+	if (status->state == TREATMENT_STATE_PREHEATING) {
+		return fan_control_set_level(AIR_LEVEL_LOW);
 	}
+	base_percent = fan_percent_for_level(status->config.air_level);
 	if (base_percent == 0U) {
 		return fan_control_stop();
 	}

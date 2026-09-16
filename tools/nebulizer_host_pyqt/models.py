@@ -72,9 +72,9 @@ class FanPidModel:
     kd_milli: int = 0
     integral_limit_permille: int = 50
     max_boost_percent: int = 10
-    low_base_percent: int = 40
-    mid_base_percent: int = 60
-    high_base_percent: int = 80
+    low_base_percent: int = 30
+    mid_base_percent: int = 35
+    high_base_percent: int = 40
 
 
 @dataclass

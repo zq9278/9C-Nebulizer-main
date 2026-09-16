@@ -15,7 +15,6 @@
 
 static const struct board_resources *res;
 static uint16_t ntc_filtered[BOARD_NTC_COUNT];
-static uint32_t ntc_diag_last_log_ms;
 
 int sensor_service_init(void)
 {
@@ -113,17 +112,6 @@ int sensor_service_sample(sensor_snapshot_t *snapshot)
 			snapshot->ntc_open[i] = false;
 			snapshot->ntc_short[i] = false;
 		}
-	}
-
-	if ((snapshot->ntc_deci_c[BOARD_NTC_KETTLE] >= 790) &&
-	    ((snapshot->sample_uptime_ms - ntc_diag_last_log_ms) >= 3000U)) {
-		ntc_diag_last_log_ms = snapshot->sample_uptime_ms;
-		LOG_INF("kettle ntc diag temp=%d.%dC raw=%u filt=%u raw_max=%u",
-			snapshot->ntc_deci_c[BOARD_NTC_KETTLE] / 10,
-			abs(snapshot->ntc_deci_c[BOARD_NTC_KETTLE] % 10),
-			snapshot->ntc_raw[BOARD_NTC_KETTLE],
-			ntc_filtered[BOARD_NTC_KETTLE],
-			snapshot->ntc_raw_max);
 	}
 
 	input_gpio_read(&res->liquid_level, &snapshot->liquid_present);

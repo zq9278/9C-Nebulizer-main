@@ -98,13 +98,13 @@
 #define FAN_PWM_PERIOD_USEC                     100U
 
 /* 风扇低档占空比，单位百分比。 */
-#define FAN_LEVEL_LOW_PERCENT                   40U
+#define FAN_LEVEL_LOW_PERCENT                   30U
 
 /* 风扇中档占空比，单位百分比。 */
-#define FAN_LEVEL_MID_PERCENT                   60U
+#define FAN_LEVEL_MID_PERCENT                   35U
 
 /* 风扇高档占空比，单位百分比。 */
-#define FAN_LEVEL_HIGH_PERCENT                  80U
+#define FAN_LEVEL_HIGH_PERCENT                  40U
 
 /* PB11 出口温度风扇 PID 周期；风扇只在档位基础值上向上调节。 */
 #define APP_FAN_PID_PERIOD_MS                   1000U

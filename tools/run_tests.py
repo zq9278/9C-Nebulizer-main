@@ -22,6 +22,8 @@ def main():
     output.mkdir(parents=True, exist_ok=True)
     common = ['protocols/common/crc16_modbus.c', 'protocols/common/frame_codec.c']
     cases = {
+        'safety/test_safety_recovery.c': ['src/state_machine/treatment_sm.c'],
+        'mist/test_mist_service.c': ['protocols/mist/mist_commands.c'],
         'adc/test_ntc_convert.c': ['drivers_app/adc/ntc_convert.c', 'drivers_app/adc/ntc_table.c'],
         'protocol/test_crc16_modbus.c': common,
         'protocol/test_frame_codec.c': common,
@@ -32,7 +34,8 @@ def main():
     environment['PATH'] = str(Path(cc).resolve().parent) + os.pathsep + environment.get('PATH', '')
     for test, sources in cases.items():
         executable = output / (Path(test).stem + ('.exe' if os.name == 'nt' else ''))
-        subprocess.run([cc, '-std=c11', '-Wall', '-Wextra', '-Werror', '-I.', '-Iinclude',
+        extra_includes = ['-Itests/fakes'] if test.startswith(('mist/', 'safety/')) else []
+        subprocess.run([cc, '-std=c11', '-Wall', '-Wextra', '-Werror', *extra_includes, '-I.', '-Iinclude',
                         'tests/' + test, *sources, '-o', str(executable)], cwd=ROOT, env=environment, check=True)
         subprocess.run([str(executable)], cwd=ROOT, env=environment, check=True)
 

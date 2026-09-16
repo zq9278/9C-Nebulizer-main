@@ -50,7 +50,7 @@ Recommended layout:
   - live active phase, PB10 error, output, and target
 - Left Fan PID Tuning pane:
   - `Kp/Ki/Kd` and integral limit
-  - LOW `40..50%`, MID `60..70%`, HIGH `80..90%` limits
+  - LOW `30..40%`, MID `35..45%`, HIGH `40..50%` limits
   - live PB11 error, base output, PID boost, and final fan PWM
 - Left maintenance pane:
   - enter/exit maintenance mode

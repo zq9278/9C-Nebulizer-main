@@ -111,6 +111,9 @@ static void mist_board_client_parser_cb(const struct frame_codec_frame *frame, v
 	switch (frame->type) {
 	case MIST_FRAME_TYPE_ACK:
 		if (pending.active && (packet.seq == pending.seq)) {
+			if (pending.request.cmd_id != MIST_CMD_GET_STATUS) {
+				LOG_INF("mist ACK cmd=0x%02x seq=%u", pending.request.cmd_id, pending.seq);
+			}
 			pending.active = false;
 		}
 		break;
@@ -118,6 +121,8 @@ static void mist_board_client_parser_cb(const struct frame_codec_frame *frame, v
 	case MIST_FRAME_TYPE_NACK:
 		if (pending.active && (packet.seq == pending.seq)) {
 			uint8_t error_code = (packet.data_len > 0U) ? packet.data[0] : 0U;
+			LOG_WRN("mist NACK cmd=0x%02x seq=%u error=%u",
+				pending.request.cmd_id, pending.seq, error_code);
 
 			if (error_code == MIST_ERR_SAFETY_LOCKED) {
 				LOG_WRN("mist board safety locked cmd=0x%02x", pending.request.cmd_id);
@@ -210,6 +215,10 @@ int mist_board_client_submit(const struct mist_client_request *req)
 	if (ret != 0) {
 		pending.active = false;
 		return ret;
+	}
+	if (req->cmd_id != MIST_CMD_GET_STATUS) {
+		LOG_INF("mist TX cmd=0x%02x seq=%u level=%u", req->cmd_id,
+			pending.seq, mist_status.desired_level);
 	}
 
 	return 0;

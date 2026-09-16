@@ -42,6 +42,8 @@ static StaticTask_t supervisor_thread;
 static maintenance_control_t maintenance_ctx;
 static bool treatment_official_started;
 static bool suppress_keep_warm_started_event;
+/* Shared by the control producer and AppTask consumer. Protected below. */
+static bool preheat_ready_pending;
 
 static void app_maintenance_apply_outputs(void);
 static void app_maintenance_stop_outputs(void);
@@ -130,6 +132,16 @@ static void app_apply_state_transition(treatment_state_t state)
 	treatment_state_t previous_state = app_context_get_state();
 
 	app_context_set_state(state);
+	if ((previous_state == TREATMENT_STATE_PAUSED) &&
+	    ((state == TREATMENT_STATE_PREHEATING) ||
+	     (state == TREATMENT_STATE_RUNNING_HOT) ||
+	     (state == TREATMENT_STATE_RUNNING_COLD))) {
+		safety_service_acknowledge_resume();
+	}
+	if (previous_state != state) {
+		LOG_INF("treatment state changed: %u -> %u",
+			(unsigned int)previous_state, (unsigned int)state);
+	}
 
 	switch (state) {
 	case TREATMENT_STATE_READY:
@@ -364,8 +376,7 @@ static void app_handle_host_command(const host_cmd_event_t *cmd)
 		config.mist_level = (mist_level_t)cmd->data[0];
 		app_context_set_config(&config);
 		(void)settings_store_save_delayed(&config);
-		mist_service_set_desired(status.state == TREATMENT_STATE_PREHEATING ||
-					 status.state == TREATMENT_STATE_RUNNING_HOT ||
+		mist_service_set_desired(status.state == TREATMENT_STATE_RUNNING_HOT ||
 					 status.state == TREATMENT_STATE_RUNNING_COLD,
 					 config.mist_level);
 		host_comm_service_send_ack(cmd->frame_id, cmd->command_id, true, 0U);
@@ -700,6 +711,13 @@ static void app_task_entry(void *a)
 			if (accepted) {
 				app_apply_state_transition(next);
 			}
+			if (evt.type == APP_EVT_PREHEAT_READY) {
+				/* A temperature dip can reject this event. Permit the control
+				 * task to submit again after the next threshold crossing. */
+				taskENTER_CRITICAL();
+				preheat_ready_pending = false;
+				taskEXIT_CRITICAL();
+			}
 			break;
 		}
 
@@ -739,7 +757,6 @@ static void app_run_control_phase(void)
 {
 	static uint32_t last_tick_ms;
 	static uint32_t subsec_ms;
-	static bool preheat_ready_pending;
 	static bool treatment_done_pending;
 	telemetry_status_t status;
 	fault_code_t heat_fault;
@@ -794,7 +811,7 @@ static void app_run_control_phase(void)
 		fan_control_step(&status);
 		fan_control_get_diag(&fan_diag);
 		app_context_set_fan_diag(&fan_diag);
-		mist_service_set_desired(true, status.config.mist_level);
+		mist_service_set_desired(false, MIST_LEVEL_UI_OFF);
 		heat_fault = heat_control_step(&status);
 		heat_control_get_diag(&heat_diag);
 		app_context_set_heat_diag(&heat_diag);
@@ -806,18 +823,19 @@ static void app_run_control_phase(void)
 
 			(void)app_event_submit(&evt);
 		}
-		if ((status.sensors.ntc_deci_c[BOARD_NTC_OUTLET1] >=
-		     APP_HEAT_FULL_POWER_BELOW_DECI_C) && !preheat_ready_pending) {
+		if (status.sensors.ntc_deci_c[BOARD_NTC_OUTLET1] >=
+		    APP_HEAT_FULL_POWER_BELOW_DECI_C) {
 			app_event_t evt = { .type = APP_EVT_PREHEAT_READY };
 
-			if (app_event_submit(&evt) == 0) {
+			taskENTER_CRITICAL();
+			if (!preheat_ready_pending && (app_event_submit(&evt) == 0)) {
 				preheat_ready_pending = true;
 			}
+			taskEXIT_CRITICAL();
 		}
 		break;
 
 	case TREATMENT_STATE_RUNNING_HOT:
-		preheat_ready_pending = false;
 		fan_control_step(&status);
 		fan_control_get_diag(&fan_diag);
 		app_context_set_fan_diag(&fan_diag);
@@ -853,7 +871,6 @@ static void app_run_control_phase(void)
 		break;
 
 	case TREATMENT_STATE_RUNNING_COLD:
-		preheat_ready_pending = false;
 		fan_control_set_level(status.config.air_level);
 		fan_control_get_diag(&fan_diag);
 		app_context_set_fan_diag(&fan_diag);
@@ -881,7 +898,6 @@ static void app_run_control_phase(void)
 		break;
 
 	case TREATMENT_STATE_KEEP_WARM:
-		preheat_ready_pending = false;
 		treatment_done_pending = false;
 		subsec_ms = 0U;
 		fan_control_stop();
@@ -902,7 +918,6 @@ static void app_run_control_phase(void)
 		break;
 
 	default:
-		preheat_ready_pending = false;
 		treatment_done_pending = false;
 		subsec_ms = 0U;
 		heat_control_stop();

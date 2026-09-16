@@ -3,7 +3,7 @@
 #include <stdlib.h>
 
 #include <nebulizer/app_config.h>
-#include <platform/board_resources.h>
+#include <platform/board_ids.h>
 #include <services/fan/fan_control.h>
 #include <services/heat/heat_control.h>
 #include <services/mist/mist_service.h>
@@ -182,6 +182,17 @@ struct safety_result safety_service_poll(void)
 		xSemaphoreGive(safety_cover_state.lock);
 	}
 
+	/* Record low water before the cover branch can return early. */
+	if (status.mist.low_water &&
+	    ((status.state == TREATMENT_STATE_PREHEATING) ||
+	     (status.state == TREATMENT_STATE_RUNNING_HOT) ||
+	     (status.state == TREATMENT_STATE_RUNNING_COLD) ||
+	     (status.state == TREATMENT_STATE_PAUSED))) {
+		xSemaphoreTake(safety_cover_state.lock, portMAX_DELAY);
+		safety_cover_state.mist_low_water_pause_latched = true;
+		xSemaphoreGive(safety_cover_state.lock);
+	}
+
 	if (!app_context_heartbeat_alive(now_ms) &&
 	    ((status.state == TREATMENT_STATE_PREHEATING) ||
 	     (status.state == TREATMENT_STATE_RUNNING_HOT) ||
@@ -243,19 +254,6 @@ struct safety_result safety_service_poll(void)
 		}
 	}
 
-	if (cover.pause_latched &&
-	    cover.closed &&
-	    (status.state == TREATMENT_STATE_PAUSED) &&
-	    (status.fault == FAULT_NONE) &&
-	    !status.mist.low_water &&
-	    !status.mist.safety_locked &&
-	    status.mist.online) {
-		LOG_INF("cover closed, resuming treatment");
-		safety_service_cover_set_pause_latched(false);
-		result.resume_requested = true;
-		return result;
-	}
-
 	static const enum board_ntc_id safety_ntcs[] = {
 		BOARD_NTC_OUTLET1,
 		BOARD_NTC_OUTLET2,
@@ -314,30 +312,6 @@ struct safety_result safety_service_poll(void)
 			result.pause_requested = true;
 			return result;
 		}
-	} else {
-		bool mist_pause_latched;
-
-		xSemaphoreTake(safety_cover_state.lock, portMAX_DELAY);
-		mist_pause_latched = safety_cover_state.mist_low_water_pause_latched;
-		if (mist_pause_latched &&
-		    (status.state == TREATMENT_STATE_PAUSED) &&
-		    (status.fault == FAULT_NONE) &&
-		    status.mist.online &&
-		    cover.closed &&
-		    !cover.pause_latched) {
-			safety_cover_state.mist_low_water_pause_latched = false;
-			xSemaphoreGive(safety_cover_state.lock);
-			LOG_INF("mist water restored, resuming treatment");
-			result.resume_requested = true;
-			return result;
-		}
-
-		if ((status.state == TREATMENT_STATE_READY) ||
-		    (status.state == TREATMENT_STATE_DONE) ||
-		    (status.state == TREATMENT_STATE_FAULT)) {
-			safety_cover_state.mist_low_water_pause_latched = false;
-		}
-		xSemaphoreGive(safety_cover_state.lock);
 	}
 
 	if ((status.mist.fault_code != 0U) && !status.mist.low_water &&
@@ -385,5 +359,29 @@ struct safety_result safety_service_poll(void)
 
 	safety_log_state.mist_offline_logged = false;
 
+	/* Keep the recovery latch until AppTask actually accepts RESUME. A full
+	 * event queue or a temporarily rejected event must not lose recovery. */
+	xSemaphoreTake(safety_cover_state.lock, portMAX_DELAY);
+	bool recovery_pending = safety_cover_state.cover_pause_latched ||
+				safety_cover_state.mist_low_water_pause_latched;
+	xSemaphoreGive(safety_cover_state.lock);
+	if (recovery_pending && (status.state == TREATMENT_STATE_PAUSED) &&
+	    cover.closed && status.sensors.cover_closed &&
+	    app_context_heartbeat_alive(now_ms) &&
+	    (status.fault == FAULT_NONE) && status.mist.online &&
+	    !status.mist.low_water && !status.mist.safety_locked &&
+	    (status.mist.fault_code == 0U)) {
+		result.resume_requested = true;
+	}
+
 	return result;
+}
+
+void safety_service_acknowledge_resume(void)
+{
+	xSemaphoreTake(safety_cover_state.lock, portMAX_DELAY);
+	safety_cover_state.cover_pause_latched = false;
+	safety_cover_state.mist_low_water_pause_latched = false;
+	xSemaphoreGive(safety_cover_state.lock);
+	LOG_INF("water/cover interlocks cleared, continuing remaining treatment");
 }
