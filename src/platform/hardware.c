@@ -179,6 +179,15 @@ int board_hardware_init(void)
 {
     HAL_Init();
     board_emergency_off();
+
+    /*
+     * A debugger can restart only the Cortex-M core while leaving RCC/PLL
+     * running. HAL_RCC_OscConfig() rejects reconfiguring a PLL that is still
+     * the active SYSCLK source, which made a second ST-Link launch fail before
+     * any task was created. Restore the reset clock state first so power-on,
+     * hardware-reset and core-restart paths all follow the same sequence.
+     */
+    if (HAL_RCC_DeInit() != HAL_OK) return -EIO;
     __HAL_RCC_PWR_CLK_ENABLE();
     if (HAL_PWREx_ControlVoltageScaling(PWR_REGULATOR_VOLTAGE_SCALE1) != HAL_OK) return -EIO;
     RCC_OscInitTypeDef osc = {0};

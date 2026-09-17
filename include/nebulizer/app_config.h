@@ -52,8 +52,8 @@
 /* 普通 GPIO 输入消抖时间，单位毫秒。 */
 #define APP_GPIO_DEBOUNCE_MS                    20
 
-/* 盖子开合独立消抖时间，单位毫秒；用于避免霍尔信号抖动导致反复暂停/恢复。 */
-#define APP_COVER_DEBOUNCE_MS                   100
+/* 磁铁盖开合独立消抖时间；原始开盖信号仍立即切断输出。 */
+#define APP_COVER_DEBOUNCE_MS                   1000
 
 /* 参数变更后延迟保存时间，单位毫秒；用于减少频繁写入非易失存储。 */
 #define APP_SETTINGS_SAVE_DELAY_MS              1000

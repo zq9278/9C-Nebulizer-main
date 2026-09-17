@@ -362,8 +362,9 @@ struct safety_result safety_service_poll(void)
 	/* Keep the recovery latch until AppTask actually accepts RESUME. A full
 	 * event queue or a temporarily rejected event must not lose recovery. */
 	xSemaphoreTake(safety_cover_state.lock, portMAX_DELAY);
-	bool recovery_pending = safety_cover_state.cover_pause_latched ||
-				safety_cover_state.mist_low_water_pause_latched;
+	/* Closing a lid that was opened during treatment must not resume by
+	 * itself. Only the separately latched low-water refill flow may resume. */
+	bool recovery_pending = safety_cover_state.mist_low_water_pause_latched;
 	xSemaphoreGive(safety_cover_state.lock);
 	if (recovery_pending && (status.state == TREATMENT_STATE_PAUSED) &&
 	    cover.closed && status.sensors.cover_closed &&

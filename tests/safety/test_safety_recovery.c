@@ -94,10 +94,31 @@ static void test_cover_and_low_water_together(void)
     assert(!result.resume_requested && result.fault == FAULT_SENSOR_NTC_OPEN);
 }
 
+static void test_cover_alone_requires_manual_resume(void)
+{
+    reset();
+    cover(false);
+    assert(safety_service_poll().pause_requested);
+    current.state = TREATMENT_STATE_PAUSED;
+    cover(true);
+    assert(!safety_service_poll().resume_requested);
+    assert(!safety_service_poll().resume_requested);
+    assert(safety_cover_state.cover_pause_latched);
+
+    app_event_t evt = { .type = APP_EVT_RESUME };
+    bool accepted;
+    current.state = treatment_sm_handle_event(current.state, &evt, &current, &accepted);
+    assert(accepted && current.state == TREATMENT_STATE_RUNNING_HOT);
+    assert(current.remaining_sec == 123);
+    safety_service_acknowledge_resume();
+    assert(!safety_cover_state.cover_pause_latched);
+}
+
 int main(void)
 {
     test_refill_retries_and_keeps_time();
     test_cover_and_low_water_together();
-    puts("test_safety_recovery: PASS (refill, cover, retry, interlocks, remaining time)");
+    test_cover_alone_requires_manual_resume();
+    puts("test_safety_recovery: PASS (refill auto-resume, cover manual-resume, debounce, interlocks)");
     return 0;
 }
