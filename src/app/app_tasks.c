@@ -811,7 +811,8 @@ static void app_run_control_phase(void)
 		fan_control_step(&status);
 		fan_control_get_diag(&fan_diag);
 		app_context_set_fan_diag(&fan_diag);
-		mist_service_set_desired(false, MIST_LEVEL_UI_OFF);
+		/* The mist board defines LOW as the 30% preheat output. */
+		mist_service_set_desired(true, MIST_LEVEL_UI_LOW);
 		heat_fault = heat_control_step(&status);
 		heat_control_get_diag(&heat_diag);
 		app_context_set_heat_diag(&heat_diag);

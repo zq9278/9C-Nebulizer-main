@@ -8,7 +8,7 @@
 #define APP_MAX_TARGET_TEMP_DECI_C              450
 
 /* 出雾口 1 过温故障阈值，单位 0.1C；达到 48.0C 立即进入故障保护。 */
-#define APP_OUTLET1_OVER_TEMP_FAULT_DECI_C      480
+#define APP_OUTLET1_OVER_TEMP_FAULT_DECI_C      580
 
 /* 默认治疗时长，单位秒；600 表示默认治疗 10 分钟。 */
 #define APP_DEFAULT_TREATMENT_TIME_SEC          600
