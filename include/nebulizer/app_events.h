@@ -28,6 +28,9 @@ typedef struct {
 	uint16_t frame_id;
 	uint8_t data[16];
 	uint16_t data_len;
+	/* Internal routing only; never serialized onto the UART protocol. */
+	uint32_t debug_session;
+	uint32_t debug_sequence;
 } host_cmd_event_t;
 
 typedef struct {

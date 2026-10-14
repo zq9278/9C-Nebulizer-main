@@ -1,4 +1,5 @@
 #include "app_tasks.h"
+#include <services/debug/debug_service.h>
 
 #include <string.h>
 
@@ -60,6 +61,7 @@ static void app_send_treatment_event(uint8_t event_id)
 
 	app_context_get_status(&status);
 	(void)host_comm_service_send_treatment_event(event_id, &status);
+	debug_service_event(1, event_id, &status);
 }
 
 /*
@@ -293,6 +295,15 @@ static void app_submit_simple_event(app_event_type_t type)
  * - 简单配置命令：直接生效并应答
  * - 影响状态的命令：交给状态机决定是否接受
  */
+/* Debug results are published after all state-transition side effects finish. */
+static uint8_t debug_command_error;
+static bool debug_release_hold;
+static void app_command_ack(const host_cmd_event_t *cmd, bool ok, uint8_t error)
+{
+	if (cmd->debug_session) debug_command_error = ok ? 0 : error;
+	else (void)host_comm_service_send_ack(cmd->frame_id, cmd->command_id, ok, error);
+}
+
 static void app_handle_host_command(const host_cmd_event_t *cmd)
 {
 	telemetry_status_t status;
@@ -306,8 +317,14 @@ static void app_handle_host_command(const host_cmd_event_t *cmd)
 
 	app_context_get_status(&status);
 	config = status.config;
+	error = debug_service_authorize(cmd);
+	if (error) { app_command_ack(cmd, false, error); return; }
 
 	switch (cmd->command_id) {
+	case HOST_CMD_HEARTBEAT:
+		if (!cmd->debug_session) app_context_heartbeat_touch();
+		app_command_ack(cmd, true, 0);
+		return;
 	case HOST_CMD_SET_MODE:
 		if ((cmd->data_len < 1U) || (cmd->data[0] > TREATMENT_MODE_COLD)) {
 			error = 1U;
@@ -324,7 +341,7 @@ static void app_handle_host_command(const host_cmd_event_t *cmd)
 			    (status.state == TREATMENT_STATE_DONE))) {
 			app_apply_state_transition(TREATMENT_STATE_KEEP_WARM);
 		}
-		host_comm_service_send_ack(cmd->frame_id, cmd->command_id, true, 0U);
+		app_command_ack(cmd, true, 0U);
 		return;
 
 	case HOST_CMD_SET_TARGET_TEMP:
@@ -337,7 +354,7 @@ static void app_handle_host_command(const host_cmd_event_t *cmd)
 		config.target_temp_deci_c = value16;
 		app_context_set_config(&config);
 		(void)settings_store_save_delayed(&config);
-		host_comm_service_send_ack(cmd->frame_id, cmd->command_id, true, 0U);
+		app_command_ack(cmd, true, 0U);
 		return;
 
 	case HOST_CMD_SET_TIME:
@@ -352,7 +369,7 @@ static void app_handle_host_command(const host_cmd_event_t *cmd)
 		app_context_set_config(&config);
 		app_context_set_remaining_sec(config.duration_sec);
 		(void)settings_store_save_delayed(&config);
-		host_comm_service_send_ack(cmd->frame_id, cmd->command_id, true, 0U);
+		app_command_ack(cmd, true, 0U);
 		return;
 
 	case HOST_CMD_SET_AIR_LEVEL:
@@ -364,7 +381,7 @@ static void app_handle_host_command(const host_cmd_event_t *cmd)
 		config.air_level = (air_level_t)cmd->data[0];
 		app_context_set_config(&config);
 		(void)settings_store_save_delayed(&config);
-		host_comm_service_send_ack(cmd->frame_id, cmd->command_id, true, 0U);
+		app_command_ack(cmd, true, 0U);
 		return;
 
 	case HOST_CMD_SET_MIST_LEVEL:
@@ -379,7 +396,7 @@ static void app_handle_host_command(const host_cmd_event_t *cmd)
 		mist_service_set_desired(status.state == TREATMENT_STATE_RUNNING_HOT ||
 					 status.state == TREATMENT_STATE_RUNNING_COLD,
 					 config.mist_level);
-		host_comm_service_send_ack(cmd->frame_id, cmd->command_id, true, 0U);
+		app_command_ack(cmd, true, 0U);
 		return;
 
 	case HOST_CMD_SET_KEEP_WARM:
@@ -400,7 +417,7 @@ static void app_handle_host_command(const host_cmd_event_t *cmd)
 			   (status.state == TREATMENT_STATE_KEEP_WARM)) {
 			app_apply_state_transition(TREATMENT_STATE_READY);
 		}
-		host_comm_service_send_ack(cmd->frame_id, cmd->command_id, true, 0U);
+		app_command_ack(cmd, true, 0U);
 		return;
 
 	case HOST_CMD_START:
@@ -429,6 +446,14 @@ static void app_handle_host_command(const host_cmd_event_t *cmd)
 			error = HOST_ERR_OTP_RESET_FAILED;
 			break;
 		}
+		error = debug_service_authorize(cmd);
+		if (error) break;
+		app_context_get_status(&status);
+		if (status.fault != FAULT_NONE || !status.sensors.cover_closed ||
+			!status.mist.online || status.mist.low_water || status.mist.safety_locked) {
+			error = HOST_ERR_STATE_REJECTED;
+			break;
+		}
 		sm_evt.type = APP_EVT_START;
 		break;
 
@@ -449,19 +474,19 @@ static void app_handle_host_command(const host_cmd_event_t *cmd)
 		break;
 
 	case HOST_CMD_GET_STATUS:
-		host_comm_service_send_status(&status);
-		host_comm_service_send_ack(cmd->frame_id, cmd->command_id, true, 0U);
+		if (!cmd->debug_session) host_comm_service_send_status(&status);
+		app_command_ack(cmd, true, 0U);
 		return;
 
 	case HOST_CMD_GET_CONFIG:
-		host_comm_service_send_config(&config);
-		host_comm_service_send_ack(cmd->frame_id, cmd->command_id, true, 0U);
+		if (!cmd->debug_session) host_comm_service_send_config(&config);
+		app_command_ack(cmd, true, 0U);
 		return;
 
 	case HOST_CMD_GET_PID:
 		heat_control_get_pid(&pid);
-		host_comm_service_send_pid(&pid);
-		host_comm_service_send_ack(cmd->frame_id, cmd->command_id, true, 0U);
+		if (!cmd->debug_session) host_comm_service_send_pid(&pid);
+		app_command_ack(cmd, true, 0U);
 		return;
 
 	case HOST_CMD_SET_PID:
@@ -473,14 +498,14 @@ static void app_handle_host_command(const host_cmd_event_t *cmd)
 
 		(void)settings_store_save_pid_delayed(&pid);
 		app_context_set_heat_pid(&pid);
-		host_comm_service_send_pid(&pid);
-		host_comm_service_send_ack(cmd->frame_id, cmd->command_id, true, 0U);
+		if (!cmd->debug_session) host_comm_service_send_pid(&pid);
+		app_command_ack(cmd, true, 0U);
 		return;
 
 	case HOST_CMD_GET_PREHEAT_PID:
 		heat_control_get_preheat_pid(&pid);
-		host_comm_service_send_preheat_pid(&pid);
-		host_comm_service_send_ack(cmd->frame_id, cmd->command_id, true, 0U);
+		if (!cmd->debug_session) host_comm_service_send_preheat_pid(&pid);
+		app_command_ack(cmd, true, 0U);
 		return;
 
 	case HOST_CMD_SET_PREHEAT_PID:
@@ -492,14 +517,14 @@ static void app_handle_host_command(const host_cmd_event_t *cmd)
 
 		(void)settings_store_save_preheat_pid_delayed(&pid);
 		app_context_set_preheat_pid(&pid);
-		host_comm_service_send_preheat_pid(&pid);
-		host_comm_service_send_ack(cmd->frame_id, cmd->command_id, true, 0U);
+		if (!cmd->debug_session) host_comm_service_send_preheat_pid(&pid);
+		app_command_ack(cmd, true, 0U);
 		return;
 
 	case HOST_CMD_GET_FAN_PID:
 		fan_control_get_pid(&pid);
-		host_comm_service_send_fan_pid(&pid);
-		host_comm_service_send_ack(cmd->frame_id, cmd->command_id, true, 0U);
+		if (!cmd->debug_session) host_comm_service_send_fan_pid(&pid);
+		app_command_ack(cmd, true, 0U);
 		return;
 
 	case HOST_CMD_SET_FAN_PID:
@@ -511,13 +536,13 @@ static void app_handle_host_command(const host_cmd_event_t *cmd)
 
 		(void)settings_store_save_fan_pid_delayed(&pid);
 		app_context_set_fan_pid(&pid);
-		host_comm_service_send_fan_pid(&pid);
-		host_comm_service_send_ack(cmd->frame_id, cmd->command_id, true, 0U);
+		if (!cmd->debug_session) host_comm_service_send_fan_pid(&pid);
+		app_command_ack(cmd, true, 0U);
 		return;
 
 	case HOST_CMD_GET_RUNTIME:
-		host_comm_service_send_runtime(&status);
-		host_comm_service_send_ack(cmd->frame_id, cmd->command_id, true, 0U);
+		if (!cmd->debug_session) host_comm_service_send_runtime(&status);
+		app_command_ack(cmd, true, 0U);
 		return;
 
 	case HOST_CMD_ENTER_MAINTENANCE:
@@ -534,15 +559,15 @@ static void app_handle_host_command(const host_cmd_event_t *cmd)
 
 		maintenance_ctx.active = true;
 		app_maintenance_apply_outputs();
-		host_comm_service_send_maintenance(&maintenance_ctx);
-		host_comm_service_send_ack(cmd->frame_id, cmd->command_id, true, 0U);
+		if (!cmd->debug_session) host_comm_service_send_maintenance(&maintenance_ctx);
+		app_command_ack(cmd, true, 0U);
 		return;
 
 	case HOST_CMD_EXIT_MAINTENANCE:
 		maintenance_ctx.active = false;
 		app_maintenance_stop_outputs();
-		host_comm_service_send_maintenance(&maintenance_ctx);
-		host_comm_service_send_ack(cmd->frame_id, cmd->command_id, true, 0U);
+		if (!cmd->debug_session) host_comm_service_send_maintenance(&maintenance_ctx);
+		app_command_ack(cmd, true, 0U);
 		return;
 
 	case HOST_CMD_MANUAL_SET_FAN:
@@ -553,8 +578,8 @@ static void app_handle_host_command(const host_cmd_event_t *cmd)
 		}
 		maintenance_ctx.fan_level = (air_level_t)cmd->data[0];
 		app_maintenance_apply_outputs();
-		host_comm_service_send_maintenance(&maintenance_ctx);
-		host_comm_service_send_ack(cmd->frame_id, cmd->command_id, true, 0U);
+		if (!cmd->debug_session) host_comm_service_send_maintenance(&maintenance_ctx);
+		app_command_ack(cmd, true, 0U);
 		return;
 
 	case HOST_CMD_MANUAL_SET_MIST:
@@ -565,8 +590,8 @@ static void app_handle_host_command(const host_cmd_event_t *cmd)
 		}
 		maintenance_ctx.mist_level = (mist_level_t)cmd->data[0];
 		app_maintenance_apply_outputs();
-		host_comm_service_send_maintenance(&maintenance_ctx);
-		host_comm_service_send_ack(cmd->frame_id, cmd->command_id, true, 0U);
+		if (!cmd->debug_session) host_comm_service_send_maintenance(&maintenance_ctx);
+		app_command_ack(cmd, true, 0U);
 		return;
 
 	case HOST_CMD_MANUAL_SET_HEAT:
@@ -577,13 +602,13 @@ static void app_handle_host_command(const host_cmd_event_t *cmd)
 		}
 		maintenance_ctx.heat_output_permille = value16;
 		app_maintenance_apply_outputs();
-		host_comm_service_send_maintenance(&maintenance_ctx);
-		host_comm_service_send_ack(cmd->frame_id, cmd->command_id, true, 0U);
+		if (!cmd->debug_session) host_comm_service_send_maintenance(&maintenance_ctx);
+		app_command_ack(cmd, true, 0U);
 		return;
 
 	case HOST_CMD_GET_MAINTENANCE:
-		host_comm_service_send_maintenance(&maintenance_ctx);
-		host_comm_service_send_ack(cmd->frame_id, cmd->command_id, true, 0U);
+		if (!cmd->debug_session) host_comm_service_send_maintenance(&maintenance_ctx);
+		app_command_ack(cmd, true, 0U);
 		return;
 
 	case HOST_CMD_CLEAR_FAULT:
@@ -596,14 +621,14 @@ static void app_handle_host_command(const host_cmd_event_t *cmd)
 	}
 
 	if (error != 0U) {
-		host_comm_service_send_ack(cmd->frame_id, cmd->command_id, false, error);
+		app_command_ack(cmd, false, error);
 		return;
 	}
 
 	app_context_get_status(&status);
 	next_state = treatment_sm_handle_event(status.state, &sm_evt, &status, &accepted);
 	if (!accepted) {
-		host_comm_service_send_ack(cmd->frame_id, cmd->command_id, false, HOST_ERR_STATE_REJECTED);
+		app_command_ack(cmd, false, HOST_ERR_STATE_REJECTED);
 		return;
 	}
 
@@ -612,9 +637,11 @@ static void app_handle_host_command(const host_cmd_event_t *cmd)
 	}
 
 	if (sm_evt.type == APP_EVT_START) {
+		debug_release_hold = false;
 		app_context_set_remaining_sec(status.config.duration_sec);
 		treatment_official_started = false;
 	}
+	if (sm_evt.type == APP_EVT_RESUME) debug_release_hold = false;
 	if (sm_evt.type == APP_EVT_STOP) {
 		treatment_official_started = false;
 		if ((status.config.mode == TREATMENT_MODE_HOT) &&
@@ -626,7 +653,7 @@ static void app_handle_host_command(const host_cmd_event_t *cmd)
 		next_state = TREATMENT_STATE_KEEP_WARM;
 	}
 
-	host_comm_service_send_ack(cmd->frame_id, cmd->command_id, true, 0U);
+	app_command_ack(cmd, true, 0U);
 	app_apply_state_transition(next_state);
 }
 
@@ -640,6 +667,43 @@ static void app_handle_host_command(const host_cmd_event_t *cmd)
  *
  * 这种拆法的目的，是把“决策”和“执行”分开，避免多个线程同时改状态。
  */
+/* Releasing a debug lease never hands running outputs to another controller. */
+static void app_debug_release(void)
+{
+	telemetry_status_t status;
+	app_context_get_status(&status);
+	debug_release_hold = true;
+	maintenance_ctx.active = false;
+	app_maintenance_stop_outputs();
+	safety_service_enter_safe_state(FAULT_NONE);
+	safety_service_acknowledge_resume(); /* clear automatic refill recovery */
+	if (status.state == TREATMENT_STATE_PREHEATING ||
+		status.state == TREATMENT_STATE_RUNNING_HOT ||
+		status.state == TREATMENT_STATE_RUNNING_COLD)
+		app_apply_state_transition(TREATMENT_STATE_PAUSED);
+	else if (status.state == TREATMENT_STATE_KEEP_WARM)
+		app_apply_state_transition(TREATMENT_STATE_READY);
+	debug_service_event(3, DEBUG_CMD_RELEASE, &status);
+	debug_service_release();
+}
+
+static void app_debug_poll(void)
+{
+	host_cmd_event_t cmd;
+	if (debug_service_expired()) app_debug_release();
+	if (!debug_service_take(&cmd)) return;
+	debug_command_error = 0;
+	if (cmd.command_id == DEBUG_CMD_ACQUIRE) {
+        /* Explicit debug takeover preserves the current treatment/maintenance.
+         * The debug lease immediately becomes the controlling heartbeat. */
+        debug_command_error = debug_service_acquire(cmd.debug_session);
+	} else if (cmd.command_id == DEBUG_CMD_RELEASE) {
+		if (debug_service_is_owner(cmd.debug_session)) app_debug_release();
+		else debug_command_error = DEBUG_ERR_OWNER;
+	} else app_handle_host_command(&cmd);
+	debug_service_complete(&cmd, debug_command_error);
+}
+
 static void app_task_entry(void *a)
 {
 	app_event_t evt;
@@ -658,7 +722,8 @@ static void app_task_entry(void *a)
 				   TREATMENT_STATE_KEEP_WARM : TREATMENT_STATE_READY);
 
 	while (true) {
-		if (app_event_wait(&evt, portMAX_DELAY) != 0) {
+		app_debug_poll();
+		if (app_event_wait(&evt, pdMS_TO_TICKS(10)) != 0) {
 			continue;
 		}
 
@@ -669,6 +734,9 @@ static void app_task_entry(void *a)
 
 		case APP_EVT_FAULT:
 			fault_manager_raise(evt.data.fault);
+			telemetry_status_t fault_status;
+			app_context_get_status(&fault_status);
+			debug_service_event(2, evt.data.fault, &fault_status);
 			app_apply_state_transition(TREATMENT_STATE_FAULT);
 			break;
 
@@ -680,6 +748,9 @@ static void app_task_entry(void *a)
 		{
 			telemetry_status_t status;
 			bool keep_warm;
+			/* A completion queued before debug disconnect must not restart
+			 * keep-warm outputs after the lease has been released. */
+			if (debug_release_hold) break;
 
 			app_context_get_status(&status);
 			keep_warm = (status.config.mode == TREATMENT_MODE_HOT) &&
@@ -705,6 +776,7 @@ static void app_task_entry(void *a)
 			telemetry_status_t status;
 			bool accepted;
 			treatment_state_t next;
+			if (evt.type == APP_EVT_RESUME && debug_release_hold) break;
 
 			app_context_get_status(&status);
 			next = treatment_sm_handle_event(status.state, &evt, &status, &accepted);
@@ -767,6 +839,10 @@ static void app_run_control_phase(void)
 
 	last_tick_ms = now_ms;
 	app_context_get_status(&status);
+	if (debug_service_expired()) {
+		safety_service_enter_safe_state(FAULT_NONE);
+		return;
+	}
 
 	if ((status.fault != FAULT_NONE) || (status.state == TREATMENT_STATE_FAULT)) {
 		app_maintenance_stop_outputs();
@@ -1008,6 +1084,7 @@ static void control_supervisor_task_entry(void *a)
 	uint32_t next_control_ms = 0U;
 	uint32_t next_safety_ms = 0U;
 	uint32_t next_telemetry_ms = 0U;
+	uint32_t next_debug_ms = 0U;
 
 	ARG_UNUSED(a);
 
@@ -1034,6 +1111,10 @@ static void control_supervisor_task_entry(void *a)
 			next_telemetry_ms = now_ms + APP_TELEMETRY_PERIOD_MS;
 		}
 
+		if ((int32_t)(now_ms - next_debug_ms) >= 0) {
+			debug_service_publish();
+			next_debug_ms = now_ms + 100U;
+		}
 		vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(10));
 	}
 }
@@ -1050,19 +1131,19 @@ static void control_supervisor_task_entry(void *a)
  */
 static void host_task_entry(void *argument)
 {
-    (void)argument;
-    host_comm_rx_task();
+	(void)argument;
+	host_comm_rx_task();
 }
 
 int app_tasks_start(void)
 {
-    configASSERT(xTaskCreateStatic(app_task_entry, "AppTask", ARRAY_SIZE(app_task_stack),
-        NULL, 3, app_task_stack, &app_task_thread));
-    configASSERT(xTaskCreateStatic(host_task_entry, "HostComm", ARRAY_SIZE(host_rx_stack),
-        NULL, 2, host_rx_stack, &host_rx_thread));
-    configASSERT(xTaskCreateStatic(mist_task_entry, "MistComm", ARRAY_SIZE(mist_stack),
-        NULL, 2, mist_stack, &mist_thread));
-    configASSERT(xTaskCreateStatic(control_supervisor_task_entry, "Control", ARRAY_SIZE(supervisor_stack),
-        NULL, 4, supervisor_stack, &supervisor_thread));
-    return 0;
+	configASSERT(xTaskCreateStatic(app_task_entry, "AppTask", ARRAY_SIZE(app_task_stack),
+		NULL, 3, app_task_stack, &app_task_thread));
+	configASSERT(xTaskCreateStatic(host_task_entry, "HostComm", ARRAY_SIZE(host_rx_stack),
+		NULL, 2, host_rx_stack, &host_rx_thread));
+	configASSERT(xTaskCreateStatic(mist_task_entry, "MistComm", ARRAY_SIZE(mist_stack),
+		NULL, 2, mist_stack, &mist_thread));
+	configASSERT(xTaskCreateStatic(control_supervisor_task_entry, "Control", ARRAY_SIZE(supervisor_stack),
+		NULL, 4, supervisor_stack, &supervisor_thread));
+	return 0;
 }

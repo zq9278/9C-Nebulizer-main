@@ -1,4 +1,5 @@
 #include "app_init.h"
+#include <services/debug/debug_service.h>
 
 #include <platform/board_devices.h>
 #include <services/communication/host_comm_service.h>
@@ -29,6 +30,7 @@ int app_init(void)
 	pid_params_t pid;
 	pid_params_t preheat_pid;
 	pid_params_t fan_pid;
+	debug_service_init();
 
 	/* 初始化全局状态仓库，写入默认配置、默认状态和心跳截止时间。 */
 	ret = app_context_init();

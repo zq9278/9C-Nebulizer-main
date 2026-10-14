@@ -35,6 +35,9 @@
 #define APP_TELEMETRY_PERIOD_MS                 500
 
 /* 雾化板命令应答超时时间，单位毫秒。 */
+#define APP_MIST_LOW_WATER_CONFIRM_MS 20000U
+#define APP_MIST_WATER_RESTORE_MS 5000U
+
 #define APP_MIST_CMD_TIMEOUT_MS                 150
 
 /* 雾化板命令失败后的重试次数。 */

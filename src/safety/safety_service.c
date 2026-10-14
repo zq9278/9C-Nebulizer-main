@@ -3,6 +3,7 @@
 #include <stdlib.h>
 
 #include <nebulizer/app_config.h>
+#include <nebulizer/protocol_ids.h>
 #include <platform/board_ids.h>
 #include <services/fan/fan_control.h>
 #include <services/heat/heat_control.h>
@@ -314,7 +315,7 @@ struct safety_result safety_service_poll(void)
 		}
 	}
 
-	if ((status.mist.fault_code != 0U) && !status.mist.low_water &&
+	if ((status.mist.fault_code != 0U) && (status.mist.fault_code != MIST_FAULT_LOW_WATER) &&
 	    ((status.state == TREATMENT_STATE_PREHEATING) ||
 	     (status.state == TREATMENT_STATE_RUNNING_HOT) ||
 	     (status.state == TREATMENT_STATE_RUNNING_COLD) ||

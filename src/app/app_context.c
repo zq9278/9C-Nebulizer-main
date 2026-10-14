@@ -1,4 +1,5 @@
 #include "app_context.h"
+#include <services/debug/debug_service.h>
 
 #include <string.h>
 
@@ -223,6 +224,7 @@ bool app_context_heartbeat_alive(uint32_t now_ms)
 
 	xSemaphoreTake(app_ctx.lock, portMAX_DELAY);
 	alive = (int32_t)(app_ctx.heartbeat_deadline_ms - now_ms) > 0;
+	if (debug_service_owned()) alive = debug_service_alive(now_ms);
 	app_ctx.status.heartbeat_ok = alive;
 	xSemaphoreGive(app_ctx.lock);
 

@@ -60,6 +60,7 @@ add_executable(nebulizer
   services/communication/host_comm_service.c
   services/communication/host_comm_rx.c
   services/communication/host_comm_tx.c
+  services/debug/debug_service.c
   services/mist/mist_service.c
   services/mist/mist_board_client.c
   services/sensors/sensor_service.c

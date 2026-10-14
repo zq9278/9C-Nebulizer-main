@@ -1,3 +1,4 @@
+#include <services/mist/mist_water_filter.h>
 #include <assert.h>
 #include <stdio.h>
 #define TEST_RUNTIME_CLOCK
@@ -114,8 +115,33 @@ static void test_cover_alone_requires_manual_resume(void)
     assert(!safety_cover_state.cover_pause_latched);
 }
 
+static void test_qualified_water_pauses_and_resumes(void)
+{
+    reset();
+    mist_water_filter_t filter={0};
+    current.mist.low_water=mist_water_filter_report(&filter,true,test_runtime_ms);
+    assert(!safety_service_poll().pause_requested);
+    test_runtime_ms=19999;
+    current.mist.low_water=mist_water_filter_report(&filter,true,test_runtime_ms);
+    assert(!safety_service_poll().pause_requested);
+    test_runtime_ms=20000;
+    current.mist.low_water=mist_water_filter_report(&filter,true,test_runtime_ms);
+    assert(safety_service_poll().pause_requested);
+    current.state=TREATMENT_STATE_PAUSED;
+    current.mist.low_water=mist_water_filter_report(&filter,false,test_runtime_ms);
+    assert(!safety_service_poll().resume_requested);
+    test_runtime_ms=24999;
+    current.mist.low_water=mist_water_filter_report(&filter,false,test_runtime_ms);
+    assert(!safety_service_poll().resume_requested);
+    test_runtime_ms=25000;
+    current.mist.low_water=mist_water_filter_report(&filter,false,test_runtime_ms);
+    assert(safety_service_poll().resume_requested);
+    assert(current.remaining_sec==123);
+}
+
 int main(void)
 {
+    test_qualified_water_pauses_and_resumes();
     test_refill_retries_and_keeps_time();
     test_cover_and_low_water_together();
     test_cover_alone_requires_manual_resume();

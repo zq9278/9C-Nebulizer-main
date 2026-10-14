@@ -1,4 +1,5 @@
 #include "mist_board_client.h"
+#include "mist_water_filter.h"
 
 #include <errno.h>
 #include <string.h>
@@ -24,6 +25,7 @@ static struct uart_port mist_uart_port;
 static struct ring_frame_parser mist_parser;
 static struct mist_pending_cmd pending;
 static mist_board_status_t mist_status;
+static mist_water_filter_t water_filter;
 static const struct board_gpio *otp_reset_gpio;
 static uint8_t mist_rx_storage[APP_MIST_RX_RING_SIZE];
 static uint8_t next_seq = 1U;
@@ -81,15 +83,18 @@ static void mist_board_client_update_fault(uint16_t fault_code)
 {
 	bool was_low_water = mist_status.low_water;
 
-	mist_status.fault_code = fault_code;
-	mist_status.low_water = (fault_code == MIST_FAULT_LOW_WATER);
+    mist_status.low_water = mist_water_filter_report(&water_filter,
+        fault_code == MIST_FAULT_LOW_WATER, runtime_now_ms());
+    /* Other faults remain immediate. Low-water is qualified in both directions. */
+    mist_status.fault_code = (fault_code == MIST_FAULT_NONE || fault_code == MIST_FAULT_LOW_WATER)
+        ? (mist_status.low_water ? MIST_FAULT_LOW_WATER : MIST_FAULT_NONE) : fault_code;
 	if (!was_low_water && mist_status.low_water) {
 		LOG_WRN("mist board reported low water");
 	} else if (was_low_water && !mist_status.low_water) {
 		LOG_INF("mist board water restored");
 	}
 
-	if (fault_code == MIST_FAULT_NONE) {
+	if (fault_code == MIST_FAULT_NONE && !mist_status.low_water) {
 		mist_status.safety_locked = false;
 	}
 }
@@ -151,7 +156,7 @@ static void mist_board_client_parser_cb(const struct frame_codec_frame *frame, v
 		if (packet.data_len >= 2U) {
 			mist_board_client_update_fault((uint16_t)packet.data[0] |
 						       ((uint16_t)packet.data[1] << 8));
-			if (mist_status.low_water) {
+			if (((uint16_t)packet.data[0] | ((uint16_t)packet.data[1] << 8)) == MIST_FAULT_LOW_WATER) {
 				mist_status.running = false;
 				mist_status.actual_level = 0U;
 				mist_status.safety_locked = true;
@@ -170,6 +175,7 @@ int mist_board_client_init(void)
 	int ret;
 
 	memset(&mist_status, 0, sizeof(mist_status));
+    memset(&water_filter, 0, sizeof(water_filter));
 	otp_reset_gpio = board_get_otp_reset();
 	if (otp_reset_gpio == NULL) {
 		return -ENODEV;
@@ -267,6 +273,7 @@ void mist_board_client_process_timeouts(void)
 	LOG_ERR("mist board timeout cmd=0x%02x", pending.request.cmd_id);
 	pending.active = false;
 	mist_status.online = false;
+    water_filter.pending = false;
 	mist_status.consecutive_failures++;
 }
 

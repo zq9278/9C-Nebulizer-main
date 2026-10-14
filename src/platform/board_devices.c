@@ -15,7 +15,7 @@ static const struct board_resources board_res = {
     .liquid_level = {&gpiob, 5, GPIO_ACTIVE_LOW | GPIO_PULL_UP},
     .hall1 = {&gpioa, 11, GPIO_ACTIVE_LOW | GPIO_PULL_UP},
     .hall2 = {&gpioa, 12, GPIO_ACTIVE_LOW | GPIO_PULL_UP},
-    .gx1832 = {&gpioa, 10, GPIO_PULL_DOWN},
+    .gx1832 = {&gpioa, 10, 0}, /* PA10: high-impedance input, no pull. */
     .ee_wp = {&gpiob, 15, 0}, .otp_reset = {&gpioa, 7, 0},
     .triac = {{&gpiob, 1, 0}, {&gpiob, 2, 0}, &timer, 4000, 3000},
     .ntc = {{&adc, ADC_CHANNEL_15, 12}, {&adc, ADC_CHANNEL_11, 12},

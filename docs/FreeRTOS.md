@@ -37,7 +37,7 @@ UART RX 使用环形缓冲区和 `xSemaphoreGiveFromISR`；TX 在硬件 TC（最
 | 液位 | PB5 | 上拉，低有效 |
 | 盖子 Hall1 | PA11 | 上拉，低有效 |
 | Hall2 | PA12 | 上拉，低有效；维持当前业务未使用状态 |
-| GX1832 | PA10 | 下拉，高有效 |
+| GX1832 | PA10 | 高阻输入，无上下拉，高有效 |
 | TRIAC gate | PB1 | 高有效 |
 | 过零检测 | PB2/EXTI2 | 双边沿，5 ms 过滤 |
 | OTP/光耦电源 | PA7 | 高输出使能，输入态释放 |

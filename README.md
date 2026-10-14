@@ -36,6 +36,8 @@ STM32_Programmer_CLI -c port=SWD -w build/release/nebulizer.hex -v -rst
 
 ## 项目导航
 
+- [J-Link + ELF 调试上位机](tools/nebulizer_debug/README.md)：独立 SWD 通道，保留原串口屏协议；启动 `tools/run_debug_host.ps1`。
+
 - [任务、引脚、中断与板上验证](docs/FreeRTOS.md)
 - [CLion 配置](docs/CLion.md)
 - [上位机协议](docs/HostProtocolReference.md)
@@ -47,3 +49,7 @@ STM32_Programmer_CLI -c port=SWD -w build/release/nebulizer.hex -v -rst
 - `services/`、`protocols/`、`drivers_app/`：业务服务、协议和驱动。
 - `cmake/`：GCC 工具链和 128 KiB Flash / 36 KiB RAM 链接脚本。
 - [第三方源码版本和许可证](third_party/README.md)
+
+### 雾化板缺水确认
+
+主控逐条处理雾化板状态/故障报告：连续缺水至少 20 秒才确认缺水；期间任一次不缺水报告取消本次计时。已确认缺水后，连续至少 5 秒不报缺水才确认补水恢复；期间任一次缺水报告取消恢复计时。由达到门限后的有效报告提交状态，不把通信静默当作补水；通信超时中断候选计时。其他故障和雾化板自身锁定保持有效。确认恢复后仍需满足原有盖子、心跳、在线及故障条件才能自动继续剩余治疗时间。
