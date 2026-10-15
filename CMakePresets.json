@@ -4,7 +4,13 @@
     {"name": "debug", "generator": "Ninja", "binaryDir": "${sourceDir}/build/debug",
      "toolchainFile": "${sourceDir}/cmake/arm-none-eabi.cmake", "cacheVariables": {"CMAKE_BUILD_TYPE": "Debug"}},
     {"name": "release", "inherits": "debug", "binaryDir": "${sourceDir}/build/release",
-     "cacheVariables": {"CMAKE_BUILD_TYPE": "Release"}}
+     "cacheVariables": {"CMAKE_BUILD_TYPE": "Release"}},
+    {"name": "upgrade-debug", "inherits": "debug", "binaryDir": "${sourceDir}/build/upgrade-debug",
+     "cacheVariables": {"NEBULIZER_BOOT_LAYOUT": "ON"}},
+    {"name": "upgrade-release", "inherits": "release", "binaryDir": "${sourceDir}/build/upgrade-release",
+     "cacheVariables": {"NEBULIZER_BOOT_LAYOUT": "ON"}}
   ],
-  "buildPresets": [{"name": "debug", "configurePreset": "debug"}, {"name": "release", "configurePreset": "release"}]
+  "buildPresets": [{"name": "debug", "configurePreset": "debug"}, {"name": "release", "configurePreset": "release"},
+    {"name": "upgrade-debug", "configurePreset": "upgrade-debug"},
+    {"name": "upgrade-release", "configurePreset": "upgrade-release"}]
 }

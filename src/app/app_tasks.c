@@ -1,5 +1,6 @@
 #include "app_tasks.h"
 #include <services/debug/debug_service.h>
+#include <nebulizer/boot_layout.h>
 
 #include <string.h>
 
@@ -321,6 +322,22 @@ static void app_handle_host_command(const host_cmd_event_t *cmd)
 	if (error) { app_command_ack(cmd, false, error); return; }
 
 	switch (cmd->command_id) {
+	case HOST_CMD_ENTER_BOOT:
+#if defined(NEBULIZER_BOOT_LAYOUT) && NEBULIZER_BOOT_LAYOUT
+		/* Only USART1 requests, outside treatment/maintenance/keep-warm.
+		 * No parameter changes or delayed state transitions before the reset. */
+		if (cmd->debug_session || cmd->data_len != 8U ||
+		    memcmp(cmd->data, NB_ENTER_COOKIE, 8U) != 0) { error = 0x71U; break; }
+		if (status.maintenance.active ||
+		    (status.state != TREATMENT_STATE_READY && status.state != TREATMENT_STATE_DONE &&
+		     status.state != TREATMENT_STATE_PAUSED && status.state != TREATMENT_STATE_FAULT)) {
+			error = HOST_ERR_STATE_REJECTED; break;
+		}
+		platform_enter_boot(cmd->frame_id);
+		return;
+#else
+		error = 0x7FU; break;
+#endif
 	case HOST_CMD_HEARTBEAT:
 		if (!cmd->debug_session) app_context_heartbeat_touch();
 		app_command_ack(cmd, true, 0);

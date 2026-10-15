@@ -1,5 +1,6 @@
 cmake_minimum_required(VERSION 3.22)
 project(Nebulizer LANGUAGES C ASM)
+option(NEBULIZER_BOOT_LAYOUT "Build protected-layout Boot + single App artifacts" OFF)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
@@ -92,6 +93,42 @@ target_link_options(nebulizer PRIVATE -mcpu=cortex-m0plus -mthumb -mfloat-abi=so
   -nostartfiles --specs=nano.specs --specs=nosys.specs
   -Wl,--gc-sections -Wl,--print-memory-usage -Wl,-Map=${CMAKE_CURRENT_BINARY_DIR}/nebulizer.map)
 set_property(TARGET nebulizer APPEND PROPERTY LINK_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/cmake/stm32g070cb.ld)
+if(NEBULIZER_BOOT_LAYOUT)
+  target_compile_definitions(nebulizer PRIVATE NEBULIZER_BOOT_LAYOUT=1)
+  target_sources(nebulizer PRIVATE src/platform/boot_request.c)
+  # Replace the standalone linker script rather than passing two -T options.
+  get_target_property(APP_LINK_OPTIONS nebulizer LINK_OPTIONS)
+  list(REMOVE_ITEM APP_LINK_OPTIONS "-T${CMAKE_CURRENT_SOURCE_DIR}/cmake/stm32g070cb.ld")
+  set_property(TARGET nebulizer PROPERTY LINK_OPTIONS "${APP_LINK_OPTIONS}")
+  target_link_options(nebulizer PRIVATE -T${CMAKE_CURRENT_SOURCE_DIR}/cmake/nebulizer_app.ld)
+  set_property(TARGET nebulizer PROPERTY LINK_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/cmake/nebulizer_app.ld)
+
+  add_executable(nebulizer_boot boot/main.c boot/update.c
+    protocols/common/crc16_modbus.c protocols/common/frame_codec.c
+    protocols/common/ring_frame_parser.c ${DEVICE}/Source/Templates/gcc/startup_stm32g070xx.s)
+  set_target_properties(nebulizer_boot PROPERTIES SUFFIX ".elf")
+  target_include_directories(nebulizer_boot PRIVATE .)
+  target_link_libraries(nebulizer_boot PRIVATE stm32_hal)
+  target_compile_options(nebulizer_boot PRIVATE -Os -Wall -Wextra -Werror)
+  target_link_options(nebulizer_boot PRIVATE -mcpu=cortex-m0plus -mthumb -mfloat-abi=soft
+    -T${CMAKE_CURRENT_SOURCE_DIR}/cmake/nebulizer_boot.ld -nostartfiles
+    --specs=nano.specs --specs=nosys.specs -Wl,--gc-sections -Wl,--print-memory-usage
+    -Wl,-Map=${CMAKE_CURRENT_BINARY_DIR}/nebulizer_boot.map)
+  set_property(TARGET nebulizer_boot PROPERTY LINK_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/cmake/nebulizer_boot.ld)
+  add_custom_command(TARGET nebulizer_boot POST_BUILD
+    COMMAND ${CMAKE_OBJCOPY} -O ihex $<TARGET_FILE:nebulizer_boot> ${CMAKE_CURRENT_BINARY_DIR}/nebulizer_boot.hex
+    COMMAND ${CMAKE_OBJCOPY} -O binary $<TARGET_FILE:nebulizer_boot> ${CMAKE_CURRENT_BINARY_DIR}/nebulizer_boot.bin
+    COMMAND ${CMAKE_SIZE} $<TARGET_FILE:nebulizer_boot>)
+  find_package(Python3 REQUIRED COMPONENTS Interpreter)
+  add_custom_target(firmware_package ALL
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/fw_update/package.py
+      --app ${CMAKE_CURRENT_BINARY_DIR}/nebulizer.bin
+      --boot ${CMAKE_CURRENT_BINARY_DIR}/nebulizer_boot.bin
+      --output ${CMAKE_CURRENT_BINARY_DIR}
+    DEPENDS nebulizer nebulizer_boot
+    BYPRODUCTS ${CMAKE_CURRENT_BINARY_DIR}/nebulizer.nfu
+      ${CMAKE_CURRENT_BINARY_DIR}/nebulizer_factory.bin ${CMAKE_CURRENT_BINARY_DIR}/nebulizer_factory.hex)
+endif()
 add_custom_command(TARGET nebulizer POST_BUILD
   COMMAND ${CMAKE_OBJCOPY} -O ihex $<TARGET_FILE:nebulizer> ${CMAKE_CURRENT_BINARY_DIR}/nebulizer.hex
   COMMAND ${CMAKE_OBJCOPY} -O binary $<TARGET_FILE:nebulizer> ${CMAKE_CURRENT_BINARY_DIR}/nebulizer.bin

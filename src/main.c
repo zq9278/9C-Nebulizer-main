@@ -3,6 +3,7 @@
 #include <platform/log.h>
 #include <src/app/app_init.h>
 #include <src/app/app_tasks.h>
+#include <nebulizer/boot_layout.h>
 #include <src/app/app_events.h>
 static StaticTask_t boot_control;
 static StackType_t boot_stack[512];
@@ -19,6 +20,10 @@ static void boot_task(void *argument)
 }
 int main(void)
 {
+#if defined(NEBULIZER_BOOT_LAYOUT) && NEBULIZER_BOOT_LAYOUT
+    SCB->VTOR = NB_APP_BASE;
+    __DSB(); __ISB();
+#endif
     if (board_hardware_init() != 0) runtime_panic("hardware_init", 0);
     platform_log_init();
     configASSERT(xTaskCreateStatic(boot_task, "Boot", ARRAY_SIZE(boot_stack), NULL, 5,

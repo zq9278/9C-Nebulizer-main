@@ -18,9 +18,11 @@ def main():
         if len(parts) == 3:
             symbols[parts[2]] = (int(parts[0], 16), parts[1])
     binary = args.elf.with_suffix('.bin').read_bytes()
-    assert 0 < len(binary) <= 128 * 1024
+    app_base=symbols['g_pfnVectors'][0]
+    assert app_base in (0x08000000,0x08004000)
+    assert 0 < len(binary) <= (110 * 1024 if app_base == 0x08004000 else 128 * 1024)
     stack, reset = struct.unpack_from('<II', binary)
-    assert stack == 0x20009000
+    assert stack == (0x20008FF0 if app_base == 0x08004000 else 0x20009000)
     assert reset == symbols['Reset_Handler'][0] | 1
     for index, name in {3:'HardFault_Handler', 11:'SVC_Handler', 14:'PendSV_Handler',
                         15:'SysTick_Handler', 22:'EXTI2_3_IRQHandler', 36:'TIM15_IRQHandler',

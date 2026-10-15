@@ -1,5 +1,9 @@
 # Nebulizer 主控板与上位机通信协议说明
 
+新增可选 Boot + 单 App 升级协议（F0..F5、回包类型 0C），使用原 USART1 帧封装。
+分区、首次烧录、字段、重传和掉电恢复见 [FirmwareUpgrade.md](FirmwareUpgrade.md)。
+这些命令不会改变原治疗命令的字段与帧格式；旧单体固件不支持串口进入 Boot。
+
 热雾预热、正式治疗开始事件和治疗后保温的对接细节见
 [`PreheatKeepWarmProtocol.md`](PreheatKeepWarmProtocol.md)。
 

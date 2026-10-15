@@ -22,6 +22,7 @@ class HostFrameType:
     MAINT = 0x09
     FAN_PID = 0x0A
     PREHEAT_PID = 0x0B
+    BOOT_REPLY = 0x0C
 
 
 class HostCmd:
@@ -52,6 +53,12 @@ class HostCmd:
     SET_FAN_PID = 0x32
     GET_PREHEAT_PID = 0x33
     SET_PREHEAT_PID = 0x34
+    ENTER_BOOT = 0xF0
+    BOOT_INFO = 0xF1
+    BOOT_BEGIN = 0xF2
+    BOOT_DATA = 0xF3
+    BOOT_END = 0xF4
+    BOOT_RUN = 0xF5
 
 
 class HostTreatmentEvent:

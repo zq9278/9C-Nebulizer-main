@@ -14,6 +14,8 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QH
 from protocol import ACQUIRE, RELEASE, STATES, EVENTS, validate_params
 from worker import DeviceWorker, ProbeWorker
 from trend import Trend, SERIES
+sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
+from fw_update.gui import UpgradeDialog
 
 ROOT=Path(__file__).resolve().parents[2]
 FAULTS=dict(enumerate(['正常','初始化失败','ADC 初始化失败','UART 初始化失败','PWM 初始化失败',
@@ -85,6 +87,7 @@ class Window(QMainWindow):
         self.dll=QLineEdit(self.settings.value('dll','')); self.dll.setPlaceholderText('留空自动查找 J-Link DLL，可指定 JLink_x64.dll')
         self.scan_button=QPushButton('刷新探针'); self.scan_button.clicked.connect(self.scan)
         self.connect_button=QPushButton('连接'); self.connect_button.clicked.connect(self.toggle_connection)
+        self.upgrade_button=QPushButton('固件升级（串口）'); self.upgrade_button.clicked.connect(self.open_upgrade)
         self.acquire_button=QPushButton('接管控制'); self.acquire_button.clicked.connect(lambda:self.submit('acquire',[(ACQUIRE,b'')]))
         self.release_button=QPushButton('释放控制'); self.release_button.clicked.connect(lambda:self.submit('release',[(RELEASE,b'')]))
         browse=QPushButton('选择 ELF'); browse.clicked.connect(self.choose_elf)
@@ -96,6 +99,7 @@ class Window(QMainWindow):
         grid.addWidget(self.acquire_button,1,7); grid.addWidget(self.release_button,2,7)
         grid.addWidget(QLabel('探针类型'),3,0); grid.addWidget(self.backend,3,1)
         self.backend.currentIndexChanged.connect(self.backend_changed)
+        grid.addWidget(self.upgrade_button,3,6,1,2)
         self.connection=QLabel('未连接 · 连接后默认观察模式'); self.connection.setObjectName('status')
         layout.addWidget(connection); layout.addWidget(self.connection)
         self.panels={}
@@ -260,6 +264,12 @@ class Window(QMainWindow):
     def backend_changed(self):
         self.serial.clear()
         self.refresh_enabled()
+
+    def open_upgrade(self):
+        if self.worker:
+            QMessageBox.information(self,'固件升级','请先断开调试连接，释放设备控制权，再进行串口升级。')
+            return
+        UpgradeDialog(self).exec()
 
     def scan(self):
         if self.probe_worker and self.probe_worker.isRunning():return

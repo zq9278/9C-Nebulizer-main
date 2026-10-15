@@ -42,6 +42,10 @@ Do not run `serial_client.py` directly. It is a library module used by `app.py`.
 
 ## Features
 
+- single-App firmware update through the existing USART1 port: click **Firmware Update**;
+  normal polling closes before the upgrade dialog takes ownership of the port.
+  See [first installation, package format and recovery](../../docs/FirmwareUpgrade.md).
+
 - USART1 live monitoring
 - treatment control
 - PB11 heater PID and outlet-temperature fan PID tuning; below 30C the heater uses fixed full power

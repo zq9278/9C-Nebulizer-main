@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sys
+from pathlib import Path
 from dataclasses import asdict
 
 from PyQt6.QtCore import QDateTime, QEvent, QTimer, Qt
@@ -44,6 +45,8 @@ from models import (
 from protocol import HostTreatmentEvent
 from serial_client import SerialClient
 from trend_widget import TrendWidget
+sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
+from fw_update.gui import UpgradeDialog
 
 
 class MainWindow(QMainWindow):
@@ -80,6 +83,11 @@ class MainWindow(QMainWindow):
             return True
         return super().eventFilter(watched, event)
 
+    def open_upgrade(self):
+        port=self.port_box.currentText()
+        self.client.close_port()
+        UpgradeDialog(self,port).exec()
+
     def _build_ui(self) -> None:
         central = QWidget()
         main_layout = QVBoxLayout(central)
@@ -91,12 +99,15 @@ class MainWindow(QMainWindow):
         read_all_button = QPushButton("Read All")
         import_button = QPushButton("Import Params")
         export_button = QPushButton("Export Params")
+        upgrade_button = QPushButton("Firmware Update")
+        upgrade_button.clicked.connect(self.open_upgrade)
         self.connection_state = QLabel("Disconnected")
         top_bar.addWidget(QLabel("USART1 Port:"))
         top_bar.addWidget(self.port_box)
         top_bar.addWidget(refresh_button)
         top_bar.addWidget(read_all_button)
         top_bar.addWidget(self.connect_button)
+        top_bar.addWidget(upgrade_button)
         top_bar.addWidget(import_button)
         top_bar.addWidget(export_button)
         top_bar.addStretch(1)

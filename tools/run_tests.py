@@ -22,6 +22,7 @@ def main():
     output.mkdir(parents=True, exist_ok=True)
     common = ['protocols/common/crc16_modbus.c', 'protocols/common/frame_codec.c']
     cases = {
+        'boot/test_boot_update.c': common + ['boot/update.c'],
         'debug/test_debug_service.c': common + ['protocols/host/host_protocol.c', 'src/state_machine/treatment_sm.c', 'services/storage/settings_defaults.c'],
         'safety/test_safety_recovery.c': ['src/state_machine/treatment_sm.c'],
         'mist/test_mist_water_filter.c': [],

@@ -2,3 +2,4 @@ PyQt6>=6.6,<7
 pyelftools>=0.31,<1
 pylink-square>=1.3,<3
 pyocd>=0.44,<0.45
+pyserial>=3.5,<4

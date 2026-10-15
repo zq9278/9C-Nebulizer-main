@@ -43,7 +43,10 @@ python tools/nebulizer_debug/app.py
 
 安装 SEGGER J-Link Software and Documentation Pack。程序需要与 Python 位数对应的
 J-Link 动态库；自动查找失败时，在界面填写 `JLink_x64.dll` 的完整路径。
-Python 依赖为 PyQt6、pyelftools、pylink-square，不需要 pyserial。
+Python 依赖为 PyQt6、pyelftools、pylink-square、pyOCD 和 pyserial。
+SWD 调试无需串口；新增“固件升级（串口）”通过 USART1 通信，
+详情见 [单 App 升级说明](../../docs/FirmwareUpgrade.md)。
+升级后调试应选择与该升级包对应的 `build/upgrade-release/nebulizer.elf`。
 
 1. 连接 J-Link 的 SWDIO、SWCLK、GND、目标电压参考；设备按原方式供电。
 2. 关闭其他占用该探针的调试会话。当前实现由本程序独占探针，不提供与 IDE 共享连接。

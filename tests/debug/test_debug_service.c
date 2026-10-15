@@ -4,6 +4,7 @@
 #include <platform/util.h>
 #define TEST_RUNTIME_CLOCK
 #define DEBUG_SERVICE_TEST
+#define NEBULIZER_BOOT_LAYOUT 1
 #include <platform/runtime.h>
 typedef uint32_t StackType_t;
 typedef unsigned StaticTask_t;
@@ -24,6 +25,8 @@ static uint8_t serial_error;
 static uint16_t heat_output;
 static pid_params_t actual_heat, actual_preheat, actual_fan;
 static bool reset_drops_cover;
+static unsigned boot_requests;
+void platform_enter_boot(uint16_t frame) { (void)frame; boot_requests++; }
 void platform_log(const char *level, const char *format, ...) { (void)level; (void)format; }
 int host_comm_service_send_ack(uint16_t frame, uint8_t cmd, bool ok, uint8_t error)
 { (void)frame; (void)cmd; (void)ok; serial_acks++; serial_error=error; return 0; }
@@ -202,8 +205,26 @@ static void test_invalid_and_snapshot(void)
     FILE *f=fopen("build/tests/debug_mailbox.bin","wb");assert(f);
     assert(fwrite((const void *)&g_nebulizer_debug,1,sizeof(g_nebulizer_debug),f)==sizeof(g_nebulizer_debug));fclose(f);
 }
+static void test_enter_boot_guards(void)
+{
+    reset();boot_requests=0;
+    host_cmd_event_t cmd={0};cmd.command_id=HOST_CMD_ENTER_BOOT;cmd.frame_id=123;
+    cmd.data_len=8;memcpy(cmd.data,NB_ENTER_COOKIE,8);
+    app_ctx.status.state=TREATMENT_STATE_RUNNING_HOT;
+    app_handle_host_command(&cmd);assert(!boot_requests && serial_error==HOST_ERR_STATE_REJECTED);
+    app_ctx.status.state=TREATMENT_STATE_KEEP_WARM;
+    app_handle_host_command(&cmd);assert(!boot_requests);
+    app_ctx.status.state=TREATMENT_STATE_READY;app_ctx.status.maintenance.active=true;
+    app_handle_host_command(&cmd);assert(!boot_requests);
+    app_ctx.status.maintenance.active=false;cmd.data[0]^=1;
+    app_handle_host_command(&cmd);assert(!boot_requests && serial_error==0x71);
+    cmd.data[0]^=1;cmd.debug_session=123;
+    app_handle_host_command(&cmd);assert(!boot_requests);
+    cmd.debug_session=0;app_handle_host_command(&cmd);assert(boot_requests==1);
+}
 int main(void)
 {
+    test_enter_boot_guards();
     test_commands_and_routing();test_lease_and_maintenance();test_all_parameter_commands();test_invalid_and_snapshot();
     puts("test_debug_service: PASS (real command routing, lease, release, duplicate, snapshot, events)");
     return 0;
