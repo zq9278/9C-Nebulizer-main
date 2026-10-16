@@ -3,6 +3,25 @@
 STM32G070CBT6 固件：原生 FreeRTOS 多任务、STM32 HAL、CMSIS，64 MHz。
 保留现有治疗状态机、预热/保温、上位机协议、雾化板协议和 EEPROM 参数格式。
 
+## Electron 模块化上位机
+
+默认上位机已迁移为 Electron + React + TypeScript，按连接、监控、参数、维护、曲线、
+日志、串口升级和工厂烧录拆分。通用组件位于 `tools/workbench/packages/`：
+`@workbench/core`、`@workbench/charts`、`@workbench/ui`、`@workbench/connections`。
+曲线组件只接收通用时序采样与通道定义，不依赖雾化器、串口或 SWD 协议。
+
+```powershell
+# 源码运行：先安装 Node.js/npm 和 Python
+python -m pip install -r tools/workbench/backend/requirements.txt
+python -m pyocd pack install stm32g070cbtx
+.\tools\run_debug_host.ps1
+```
+
+Windows 免安装包位于 `tools/workbench/release/Nebulizer-Workbench-1.0.0-x64.exe`，
+内置无 Qt 硬件后台及芯片算法包。J-Link 仍需要 SEGGER 驱动/DLL。
+构建、测试、打包与新项目模块复用见 [Electron 上位机说明](tools/workbench/README.md)。
+原 PyQt 界面保留为 `tools/run_pyqt_debug_host.ps1`，不再是默认启动入口。
+
 ## 编译
 
 安装 STM32CubeCLT，将 arm-none-eabi-gcc、CMake、Ninja 加入 PATH。
@@ -120,6 +139,11 @@ ZIP 是交付归档；上位机选择 ZIP 内的 `.nfu`，烧录器选择 `nebul
 ### 5. 首次烧录与后续升级
 
 首次安装需用 DAPLink、ST-Link 或 J-Link 及对应烧录工具写入 `nebulizer_factory.hex`。
+现有调试上位机也支持 J-Link / DAPLink 工厂烧录：选择并刷新探针，保持调试断开，
+进入“工厂烧录”，选择完整工厂镜像，确认实际输出已停止后执行。
+DAPLink 首次烧录先运行 `python -m pyocd pack install stm32g070cbtx` 安装芯片算法。
+模块读回校验完整 128 KiB，默认不复位运行；可在窗口勾选校验后复位。
+具体操作见 [工厂烧录模块说明](tools/nebulizer_debug/README.md)。
 旧单体固件没有本 Boot，不能直接使用 `.nfu` 迁移，也不能只烧录独立 App。
 使用 STM32CubeProgrammer + ST-Link 时，例如：
 
@@ -134,7 +158,7 @@ STM32_Programmer_CLI -c port=SWD -w build/upgrade-release/nebulizer_factory.hex 
 .\tools\run_debug_host.ps1
 ```
 
-点击“固件升级（串口）”，选择对应 COM 口和 `nebulizer.nfu`。
+进入“串口升级”，选择对应 COM 口和 `nebulizer.nfu`。
 原串口上位机中的 **Firmware Update** 也可使用同一升级窗口。
 升级时关闭其他串口程序，避免串口屏同时向同一总线发帧。
 也可以使用命令行，将 COM5 换成实际端口：

@@ -1,0 +1,13 @@
+{
+  "name": "@workbench/charts",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "exports": "./src/TimeSeriesChart.tsx",
+  "peerDependencies": {
+    "react": ">=19"
+  },
+  "dependencies": {
+    "@workbench/core": "*"
+  }
+}

@@ -1,0 +1,115 @@
+.wb-chart {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+  height: 100%;
+}
+.wb-chart-toolbar {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.wb-chart button {
+  font: inherit;
+  font-size: 12px;
+  border: 1px solid #e3e9ef;
+  background: white;
+  color: #51657a;
+  border-radius: 6px;
+  padding: 6px 9px;
+  cursor: pointer;
+}
+.wb-chart-presets,
+.wb-chart-actions {
+  display: flex;
+  gap: 4px;
+}
+.wb-chart button.selected {
+  background: #eaf3ff;
+  border-color: #c9defa;
+  color: #276ed0;
+}
+.wb-chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.wb-chart-legend button {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 146px;
+  text-align: left;
+}
+.wb-chart-legend i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
+.wb-chart-legend strong {
+  margin-left: auto;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.wb-chart-legend small {
+  font-weight: 400;
+  margin-left: 4px;
+  color: #8b9bac;
+}
+.wb-chart-legend .hidden-series {
+  opacity: 0.4;
+}
+.wb-chart-plot {
+  position: relative;
+  min-height: 300px;
+  flex: 1;
+}
+.wb-chart canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+  cursor: crosshair;
+}
+.wb-chart-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 8px;
+  pointer-events: none;
+  color: #8a9baa;
+}
+.wb-chart-empty span {
+  font-size: 55px;
+  color: #b7cadb;
+}
+.wb-chart-empty small {
+  font-size: 12px;
+}
+.wb-chart-cursor {
+  position: absolute;
+  top: 8px;
+  left: 80px;
+  background: #ffffffdd;
+  border: 1px solid #e3e9ef;
+  border-radius: 5px;
+  padding: 5px 10px;
+  font-size: 11px;
+  pointer-events: none;
+  color: #526a81;
+}
+.wb-chart-footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 10px;
+  color: #98a6b5;
+}
+.wb-chart-footer .live {
+  color: #3c9c88;
+}

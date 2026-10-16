@@ -1,8 +1,40 @@
 # Nebulizer SWD 调试工作台
 
+本文记录保留的 PyQt 版本。默认启动入口 `tools/run_debug_host.ps1` 已改为
+[Electron 模块化上位机](../workbench/README.md)，原版本改用 `tools/run_pyqt_debug_host.ps1`。
+
 独立于原串口上位机的新 PyQt6 桌面程序。通过 J-Link 或 DAPLink / SWD 访问固件 RAM 调试接口，
 使用当前烧录固件对应的 ELF 定位接口，并逐段核对设备 Flash。
 原 `tools/nebulizer_host_pyqt/` 和 `tools/run_host.ps1` 保留，继续可用于串口通信。
+
+## 工厂 HEX 烧录（含 Boot）
+
+设备连接区域新增“烧录工厂 HEX”。先选择 J-Link 或 DAPLink，刷新并选中探针，
+保持调试连接断开，然后打开该窗口，选择 `build/upgrade-release/nebulizer_factory.hex`
+或 Debug 构建的同名文件。停止实际治疗/加热/雾化后勾选覆盖确认，再点击“检查镜像并烧录”。
+
+DAPLink 烧录需要芯片 Flash 算法包（普通 RAM 调试使用的 cortex_m 不能烧写 Flash）：
+
+```powershell
+python -m pip install -r tools/nebulizer_debug/requirements.txt
+python -m pyocd pack install stm32g070cbtx
+python -m pyocd list --targets --name stm32g070cb
+```
+
+本机已安装对应 Pack；其他电脑需执行上述安装。J-Link 使用原 SEGGER DLL，目标固定为 STM32G070CB。
+模块检查完整 128 KiB HEX、Boot/App 启动向量、App CRC32、有效记录和保留区域，
+再检查设备家族 ID、实际 Flash 容量和读保护状态。烧录会覆盖 Boot、App 和记录区，
+不修改 EEPROM 和 Option Bytes，不自动解除保护。
+
+烧录时暂停 CPU，并将板级控制引脚置为停止输出；必须先停止实际负载，不能用暂停 CPU 代替停止业务。
+完成后读取全部 128 KiB 逐字节校验。默认保持 CPU 暂停，需要手动复位；
+可勾选“校验成功后复位运行”，复位后 App 会恢复原 EEPROM 配置。
+操作期间窗口禁止关闭，不提供强行中止或自动重试。
+若校验失败则不会执行正常复位运行步骤，应检查设备并重新烧录完整工厂 HEX。
+
+成功后，同目录 `nebulizer.elf` 与镜像内容一致时，会自动填入主窗口 ELF 字段。
+烧录模块为单独会话，正常调试连接仍保持不烧录、不复位、不暂停的行为。
+软件测试：`python tests/debug/test_factory_flash.py`；当前尚未完成实板烧录验收。
 
 ## 启动
 

@@ -1,0 +1,65 @@
+{
+  "name": "nebulizer-workbench",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Modular instrument workbench",
+  "author": "Sanitlook",
+  "main": "electron/main.cjs",
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "start": "npm run build && electron .",
+    "build": "tsc --noEmit && vite build",
+    "test": "vitest run",
+    "test:desktop": "node tests/desktop.cjs",
+    "backend:bundle": "python scripts/bundle_backend.py",
+    "dist": "npm run build && npm run backend:bundle && electron-builder --win portable --publish never"
+  },
+  "dependencies": {
+    "@workbench/charts": "*",
+    "@workbench/core": "*",
+    "lucide-react": "^0.577.0",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "@workbench/ui": "*",
+    "@workbench/connections": "*"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "electron": "44.7.2",
+    "electron-builder": "^26.0.12",
+    "playwright": "^1.58.0",
+    "prettier": "^3.9.10",
+    "typescript": "^5.9.3",
+    "vite": "8.3.4",
+    "vitest": "^4.1.0"
+  },
+  "build": {
+    "electronDist": "node_modules/electron/dist",
+    "appId": "cn.sanitlook.workbench",
+    "productName": "Nebulizer Workbench",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "runtime/device-backend",
+        "to": "device-backend"
+      }
+    ],
+    "win": {
+      "target": "portable",
+      "signAndEditExecutable": false
+    },
+    "artifactName": "Nebulizer-Workbench-${version}-${arch}.${ext}"
+  }
+}

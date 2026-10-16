@@ -16,6 +16,7 @@ from worker import DeviceWorker, ProbeWorker
 from trend import Trend, SERIES
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from fw_update.gui import UpgradeDialog
+from factory import FactoryDialog
 
 ROOT=Path(__file__).resolve().parents[2]
 FAULTS=dict(enumerate(['正常','初始化失败','ADC 初始化失败','UART 初始化失败','PWM 初始化失败',
@@ -100,6 +101,8 @@ class Window(QMainWindow):
         grid.addWidget(QLabel('探针类型'),3,0); grid.addWidget(self.backend,3,1)
         self.backend.currentIndexChanged.connect(self.backend_changed)
         grid.addWidget(self.upgrade_button,3,6,1,2)
+        self.factory_button=QPushButton('烧录工厂 HEX');self.factory_button.clicked.connect(self.open_factory)
+        grid.addWidget(self.factory_button,3,2,1,2)
         self.connection=QLabel('未连接 · 连接后默认观察模式'); self.connection.setObjectName('status')
         layout.addWidget(connection); layout.addWidget(self.connection)
         self.panels={}
@@ -270,6 +273,26 @@ class Window(QMainWindow):
             QMessageBox.information(self,'固件升级','请先断开调试连接，释放设备控制权，再进行串口升级。')
             return
         UpgradeDialog(self).exec()
+
+    def open_factory(self):
+        if self.worker or (self.probe_worker and self.probe_worker.isRunning()):
+            QMessageBox.information(self,'工厂烧录','请先断开调试连接，并等待探针扫描结束。');return
+        serial=self.serial.currentText().strip()
+        if not serial or (self.backend.currentData()=='jlink' and not serial.isdigit()):
+            QMessageBox.warning(self,'工厂烧录','请先选择探针类型，刷新并选择探针序列号。');return
+        options=dict(backend=self.backend.currentData(),serial=serial,speed=self.speed.value(),dll=self.dll.text().strip())
+        dialog=FactoryDialog(self,options);dialog.exec()
+        if dialog.succeeded:
+            candidate=dialog.image.path.with_name('nebulizer.elf')
+            if candidate.exists():
+                try:
+                    from transport import ElfImage
+                    elf=ElfImage(candidate)
+                    if not all(dialog.image.data[a-0x08000000:a-0x08000000+len(b)]==b for a,b in elf.segments):
+                        raise ValueError('同目录 ELF 与工厂镜像不同')
+                    self.elf.setText(str(candidate));self.settings.setValue('elf',str(candidate))
+                    self.log('已选择与工厂镜像匹配的 App ELF：'+str(candidate))
+                except Exception as exc:self.log('请手动选择匹配的 App ELF：'+str(exc))
 
     def scan(self):
         if self.probe_worker and self.probe_worker.isRunning():return
