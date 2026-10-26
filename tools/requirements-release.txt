@@ -1,0 +1,2 @@
+# Optional Chrome-compatible TLS for servers rejecting the default HTTPS client.
+curl_cffi>=0.13,<1
