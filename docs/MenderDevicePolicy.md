@@ -34,3 +34,8 @@
 - 验证结果：关闭证书校验后，设备认证请求仍发生 connection reset by peer；设备 curl 跳过验证也仍失败。本次配置修改已生效，但网络/TLS 握手兼容性问题未解决。
 
 本机留档：`build/adb-inspection-20261026/tls-policy-change.json`。恢复时可将设备上的上述备份复制回 `/etc/mender/mender.conf` 并重启 slk-mender；恢复配置不会修复当前独立的连接重置问题。
+
+
+## 后续连接修复（2026-10-26 13:37）
+
+通过透明 TLS 握手分片兼容层，实际 Mender 链路已恢复：设备重新认证成功、服务器库存刷新、V0.0.7 任务已领取并停在人工确认门控。未安装固件。保留 SkipVerify=true 和原签名公钥。构建、部署、局限与回退见 [mender_tls_relay](../tools/mender_tls_relay/README.md)。无需 T113 SDK。
